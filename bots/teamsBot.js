@@ -540,7 +540,7 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * 🌐 AUTENTICAR CON NOVA API - VERSIÓN CORREGIDA
+     * 🌐 AUTENTICAR CON NOVA API - VERSIÓN CORREGIDA PARA JSON STRING
      */
     async authenticateWithNova(username, password) {
         try {
@@ -562,15 +562,34 @@ class TeamsBot extends DialogBot {
             );
 
             console.log(`📡 Respuesta Nova (${response.status}):`, JSON.stringify(response.data, null, 2));
+            console.log(`🔍 Tipo de respuesta:`, typeof response.data);
 
-            if (response.data && response.data.info && response.data.info.length > 0) {
-                const rawUserInfo = response.data.info[0];
+            // ✅ CORRECCIÓN: Parsear JSON si viene como string
+            let parsedData = response.data;
+            
+            if (typeof response.data === 'string') {
+                console.log(`🔧 Parseando JSON string...`);
+                try {
+                    parsedData = JSON.parse(response.data);
+                    console.log(`✅ JSON parseado exitosamente:`, parsedData);
+                } catch (parseError) {
+                    console.error(`❌ Error parseando JSON:`, parseError.message);
+                    return {
+                        success: false,
+                        message: 'Error procesando respuesta del servidor'
+                    };
+                }
+            }
+
+            if (parsedData && parsedData.info && parsedData.info.length > 0) {
+                const rawUserInfo = parsedData.info[0];
                 
                 console.log(`🔍 Datos del usuario:`, {
                     EsValido: rawUserInfo.EsValido,
                     HasToken: !!rawUserInfo.Token,
                     TokenLength: rawUserInfo.Token ? rawUserInfo.Token.length : 0,
-                    Mensaje: rawUserInfo.Mensaje
+                    Mensaje: rawUserInfo.Mensaje,
+                    CveUsuario: rawUserInfo.CveUsuario
                 });
                 
                 // ✅ CORRECCIÓN: Limpiar datos y verificar correctamente
@@ -598,7 +617,7 @@ class TeamsBot extends DialogBot {
                     };
                 }
             } else {
-                console.log('❌ Respuesta sin datos válidos');
+                console.log('❌ Respuesta sin datos válidos - parsedData:', parsedData);
                 return {
                     success: false,
                     message: 'Respuesta inesperada del servidor'

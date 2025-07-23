@@ -1,4 +1,5 @@
 // index.js - Configuración simplificada del bot sin OAuth/Azure
+// 🔧 ARREGLADO: Endpoints de Restify con sintaxis correcta
 
 const path = require('path');
 const restify = require('restify');
@@ -35,8 +36,12 @@ adapter.onTurnError = async (context, error) => {
     
     // Limpiar estados en caso de error
     try {
-        await conversationState.delete(context);
-        await userState.delete(context);
+        if (conversationState) {
+            await conversationState.delete(context);
+        }
+        if (userState) {
+            await userState.delete(context);
+        }
     } catch (cleanupError) {
         console.error('Error limpiando estados:', cleanupError);
     }
@@ -62,36 +67,50 @@ server.post('/api/messages', async (req, res) => {
     }
 });
 
-// Endpoint de salud
-server.get('/health', (req, res) => {
-    res.json({
-        status: 'OK',
-        timestamp: new Date().toISOString(),
-        bot: 'Nova Bot Simplificado',
-        features: {
-            customLogin: true,
-            oauth: false,
-            azure: false,
-            openai: !!process.env.OPENAI_API_KEY
-        }
-    });
+// 🔧 FIX: Endpoint de salud con sintaxis correcta
+server.get('/health', (req, res, next) => {
+    try {
+        res.json({
+            status: 'OK',
+            timestamp: new Date().toISOString(),
+            bot: 'Nova Bot Simplificado',
+            features: {
+                customLogin: true,
+                oauth: false,
+                azure: false,
+                openai: !!process.env.OPENAI_API_KEY
+            }
+        });
+        return next();
+    } catch (error) {
+        console.error('Error en endpoint /health:', error);
+        res.status(500).json({ error: 'Internal server error' });
+        return next();
+    }
 });
 
-// Endpoint de diagnóstico
-server.get('/diagnostic', (req, res) => {
-    res.json({
-        bot: bot.getStats?.() || { status: 'running' },
-        memory: {
-            used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
-            total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
-        },
-        uptime: Math.round(process.uptime()) + ' segundos',
-        environment: {
-            hasOpenAI: !!process.env.OPENAI_API_KEY,
-            hasBotId: !!process.env.MicrosoftAppId,
-            nodeVersion: process.version
-        }
-    });
+// 🔧 FIX: Endpoint de diagnóstico con sintaxis correcta
+server.get('/diagnostic', (req, res, next) => {
+    try {
+        res.json({
+            bot: bot.getStats?.() || { status: 'running' },
+            memory: {
+                used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+                total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
+            },
+            uptime: Math.round(process.uptime()) + ' segundos',
+            environment: {
+                hasOpenAI: !!process.env.OPENAI_API_KEY,
+                hasBotId: !!process.env.MicrosoftAppId,
+                nodeVersion: process.version
+            }
+        });
+        return next();
+    } catch (error) {
+        console.error('Error en endpoint /diagnostic:', error);
+        res.status(500).json({ error: 'Internal server error' });
+        return next();
+    }
 });
 
 // Manejo de cierre graceful

@@ -263,6 +263,7 @@ nova-bot/
 ├── 📁 bots/
 │   ├── 📄 dialogBot.js          # Base para manejo de estados
 │   ├── 📄 teamsBot.js           # ⭐ Bot principal con login
+├── 📁 dialogs/
 │   ├── 📄 mainDialog.js         # Diálogo principal (opcional)
 │   └── 📄 logoutDialog.js       # Diálogo de logout (opcional)
 ├── 📁 services/

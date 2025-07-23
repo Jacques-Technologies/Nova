@@ -32,13 +32,6 @@
 - 💾 **Almacenamiento en Memoria** - Datos temporales sin persistencia
 - 📱 **Compatible con Teams** - Optimizado para Microsoft Teams
 
-### ❌ **Eliminado Completamente**
-- ~~OAuth de Microsoft~~ - Reemplazado por login personalizado
-- ~~Azure Cosmos DB~~ - Ahora usa MemoryStorage
-- ~~Azure Search~~ - Eliminada búsqueda en documentos
-- ~~APIs externas complejas~~ - Solo API de Nova
-- ~~Tarjetas dinámicas complejas~~ - Simplificadas
-
 ## 🏗️ Arquitectura
 
 ```

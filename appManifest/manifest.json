@@ -4,18 +4,18 @@
   "version": "1.0.0",
   "id": "236cbf74-dd25-43fb-9779-ae2dbf3c1739",
   "developer": {
-      "name": "Alfa Corporativo",
-      "websiteUrl": "https://www.alfa.com.mx",
-      "privacyUrl": "https://www.alfa.com.mx",
-      "termsOfUseUrl": "https://www.alfa.com.mx"
+      "name": "Nova",
+      "websiteUrl": "https://www.nova.com.mx",
+      "privacyUrl": "https://www.nova.com.mx",
+      "termsOfUseUrl": "https://www.nova.com.mx"
   },
   "icons": {
     "color": "color.png",
     "outline": "outline.png"
   },
   "name": {
-    "short": "Alfabot Staging",
-    "full": "Alfabot Staging"
+    "short": "Nova Staging",
+    "full": "Nova Staging"
   },
   "description": {
     "short": "Ambiente de pruebas en entorno Staging",

@@ -64,14 +64,14 @@ Usuario                    Nova Bot                    Nova API
   │                           │                           │
   │─── Inicia conversación ──►│                           │
   │                           │                           │
-  │◄── Tarjeta de Login ─────│                           │
+  │◄── Tarjeta de Login ──────│                           │
   │                           │                           │
   │─── Envía credenciales ───►│                           │
   │                           │──── POST /Auth/login ────►│
   │                           │                           │
-  │                           │◄──── Token + Info ───────│
+  │                           │◄──── Token + Info ────────│
   │                           │                           │
-  │◄─── Bienvenida + Token ──│                           │
+  │◄─── Bienvenida + Token ───│                           │
   │                           │                           │
 ```
 
@@ -82,11 +82,11 @@ Usuario Autenticado        Nova Bot                OpenAI API
          │                     │                       │
          │──── Mensaje ───────►│                       │
          │                     │                       │
-         │                     │─── Prompt + Context ►│
+         │                     │─── Prompt + Context ─►│
          │                     │                       │
-         │                     │◄─── Respuesta ───────│
+         │                     │◄─── Respuesta ────────│
          │                     │                       │
-         │◄─── Respuesta ─────│                       │
+         │◄─── Respuesta ──────│                       │
          │                     │                       │
 ```
 
@@ -95,14 +95,14 @@ Usuario Autenticado        Nova Bot                OpenAI API
 ```
 Usuario                    Nova Bot
   │                           │
-  │───── "logout" ──────────►│
+  │───── "logout" ───────────►│
   │                           │
   │                           │ (Limpia memoria)
   │                           │ (Limpia estados)
   │                           │
-  │◄── Sesión cerrada ──────│
+  │◄── Sesión cerrada ────────│
   │                           │
-  │◄── Nueva tarjeta login ──│
+  │◄── Nueva tarjeta login ───│
   │                           │
 ```
 

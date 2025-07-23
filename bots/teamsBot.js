@@ -23,7 +23,7 @@ class TeamsBot extends DialogBot {
     async handleMembersAdded(context, next) {
         for (const member of context.activity.membersAdded) {
             if (member.id !== context.activity.recipient.id) {
-                await this.showLoginOptions(context);
+                await this.showLoginCard(context);
             }
         }
         await next();
@@ -39,6 +39,12 @@ class TeamsBot extends DialogBot {
             // 🧪 COMANDO DE DIAGNÓSTICO
             if (text.toLowerCase() === 'test-card' || text.toLowerCase() === 'test') {
                 await this.runCardTests(context);
+                return await next();
+            }
+
+            // 🧪 COMANDO DE DEBUG API
+            if (text.toLowerCase().startsWith('debug-api ')) {
+                await this.debugNovaAPI(context, text);
                 return await next();
             }
 
@@ -70,7 +76,7 @@ class TeamsBot extends DialogBot {
             const isAuthenticated = await this.isUserAuthenticated(userId, context);
             
             if (!isAuthenticated) {
-                await this.showLoginOptions(context);
+                await this.showLoginCard(context);
                 return await next();
             }
 
@@ -86,8 +92,64 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * 🧪 PRUEBAS DE TARJETAS - Para diagnosticar problemas
+     * 🧪 DEBUG DE LA API NOVA
      */
+    async debugNovaAPI(context, text) {
+        try {
+            // Extraer credenciales del formato: debug-api usuario:contraseña
+            const debugPart = text.substring(10).trim(); // Remover "debug-api "
+            const [username, password] = debugPart.split(':');
+
+            if (!username || !password) {
+                await context.sendActivity(
+                    '🧪 **Debug API Nova**\n\n' +
+                    '✅ **Formato**: `debug-api usuario:contraseña`\n' +
+                    '📝 **Ejemplo**: `debug-api 111111:password`\n\n' +
+                    'Esto probará la API sin procesar el login.'
+                );
+                return;
+            }
+
+            await context.sendActivity('🧪 **Probando API Nova directamente...**');
+            await context.sendActivity({ type: 'typing' });
+
+            console.log(`\n🧪 ===== DEBUG API NOVA =====`);
+            console.log(`Usuario: ${username}`);
+            console.log(`Password: ${'*'.repeat(password.length)}`);
+
+            const result = await this.authenticateWithNova(username.trim(), password.trim());
+
+            console.log(`Resultado:`, result);
+            console.log(`===== FIN DEBUG API =====\n`);
+
+            if (result.success) {
+                await context.sendActivity(
+                    `✅ **API Nova - ÉXITO**\n\n` +
+                    `👤 **Usuario**: ${result.userInfo.usuario}\n` +
+                    `👋 **Nombre**: ${result.userInfo.nombre}\n` +
+                    `🔑 **Token**: ${result.userInfo.token.substring(0, 30)}...\n` +
+                    `💬 **Mensaje**: ${result.userInfo.mensaje}\n\n` +
+                    `🎯 **La API funciona correctamente. El problema podría estar en:**\n` +
+                    `• El submit de la tarjeta\n` +
+                    `• El procesamiento de datos\n` +
+                    `• La interfaz de Teams`
+                );
+            } else {
+                await context.sendActivity(
+                    `❌ **API Nova - ERROR**\n\n` +
+                    `📝 **Mensaje**: ${result.message}\n\n` +
+                    `🔍 **Verifica**:\n` +
+                    `• Credenciales correctas\n` +
+                    `• Conexión a internet\n` +
+                    `• Servidor Nova disponible`
+                );
+            }
+
+        } catch (error) {
+            console.error('Error en debug API:', error);
+            await context.sendActivity(`❌ **Error en debug**: ${error.message}`);
+        }
+    }
     async runCardTests(context) {
         try {
             console.log('🧪 Ejecutando pruebas de tarjetas...');
@@ -190,25 +252,36 @@ class TeamsBot extends DialogBot {
             body: [
                 {
                     type: 'TextBlock',
-                    text: 'Login',
+                    text: 'Iniciar Sesión',
+                    size: 'Large',
                     weight: 'Bolder'
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'Ingresa tus credenciales corporativas:',
+                    wrap: true
                 },
                 {
                     type: 'Input.Text',
                     id: 'username',
-                    placeholder: 'Usuario'
+                    placeholder: 'Usuario (ej: 91004)'
                 },
                 {
                     type: 'Input.Text',
                     id: 'password',
                     placeholder: 'Contraseña',
                     style: 'Password'
+                },
+                {
+                    type: 'TextBlock',
+                    text: '🔒 Conexión segura',
+                    size: 'Small'
                 }
             ],
             actions: [
                 {
                     type: 'Action.Submit',
-                    title: 'Entrar',
+                    title: '🚀 Iniciar Sesión',
                     data: { action: 'login' }
                 }
             ]
@@ -278,25 +351,22 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * 📋 MOSTRAR OPCIONES DE LOGIN
+     * 🔐 MOSTRAR LOGIN DIRECTO
      */
     async showLoginOptions(context) {
         try {
-            const message = 
-                '🔐 **Bienvenido a Nova Bot**\n\n' +
-                '**Opciones de login:**\n\n' +
-                '🃏 **Opción 1 (Recomendada)**: Escribe `card-login`\n' +
-                '   └ Te mostrará una tarjeta interactiva\n\n' +
-                '📝 **Opción 2 (Alternativa)**: Escribe `login usuario:contraseña`\n' +
-                '   └ Ejemplo: `login 91004:mipassword`\n\n' +
-                '🧪 **Diagnóstico**: Escribe `test` para probar las tarjetas\n\n' +
-                '❓ **¿Cuál prefieres?**';
-
-            await context.sendActivity(message);
+            console.log('🔐 Mostrando login directo...');
+            await this.showLoginCard(context);
 
         } catch (error) {
-            console.error('Error mostrando opciones:', error);
-            await context.sendActivity('🔐 Para login, escribe: `login usuario:contraseña`');
+            console.error('Error mostrando login:', error);
+            // Fallback si la tarjeta falla
+            await context.sendActivity(
+                '🔐 **Bienvenido a Nova Bot**\n\n' +
+                'Para iniciar sesión, escribe:\n' +
+                '`login usuario:contraseña`\n\n' +
+                'Ejemplo: `login 91004:mipassword`'
+            );
         }
     }
 
@@ -307,10 +377,10 @@ class TeamsBot extends DialogBot {
         try {
             console.log('🔐 Intentando mostrar tarjeta de login...');
 
-            // Primero el texto
-            await context.sendActivity('🔐 **Formulario de Login**');
+            // Mensaje de bienvenida
+            await context.sendActivity('🔐 **Bienvenido a Nova Bot**');
 
-            // Intentar tarjeta mínima primero
+            // Tarjeta de login
             const loginCard = this.createMinimalLoginCard();
             
             console.log('🔐 Enviando tarjeta...', JSON.stringify(loginCard.content, null, 2));
@@ -321,17 +391,12 @@ class TeamsBot extends DialogBot {
 
             console.log('✅ Tarjeta enviada exitosamente');
 
-            // Instrucciones adicionales
-            await context.sendActivity(
-                '📝 **Alternativa**: Si no ves la tarjeta, escribe:\n' +
-                '`login tu_usuario:tu_contraseña`'
-            );
-
         } catch (error) {
             console.error('❌ Error enviando tarjeta de login:', error);
             
             // Fallback completo
             await context.sendActivity(
+                '🔐 **Bienvenido a Nova Bot**\n\n' +
                 '❌ **Error con la tarjeta**\n\n' +
                 '🔄 **Usa el método alternativo:**\n' +
                 'Escribe: `login usuario:contraseña`\n\n' +
@@ -393,24 +458,32 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * 📤 MANEJAR SUBMIT DE TARJETA
+     * 📤 MANEJAR SUBMIT DE TARJETA - CON LOGGING MEJORADO
      */
     async handleLoginSubmit(context) {
         const userId = context.activity.from.id;
         
         try {
-            console.log(`[${userId}] Submit de tarjeta recibido:`, JSON.stringify(context.activity.value, null, 2));
+            console.log(`\n🎯 [${userId}] ===== SUBMIT DE TARJETA RECIBIDO =====`);
+            console.log(`📋 Activity value:`, JSON.stringify(context.activity.value, null, 2));
 
             const value = context.activity.value || {};
             const { username, password, action } = value;
 
+            console.log(`🔍 Datos extraídos:`, {
+                username: username ? `"${username}" (${username.length} chars)` : 'undefined',
+                password: password ? `"${'*'.repeat(password.length)}" (${password.length} chars)` : 'undefined',
+                action: action
+            });
+
             // Verificar que es el submit correcto
             if (action !== 'login') {
-                console.log(`[${userId}] Submit ignorado - acción: ${action}`);
+                console.log(`⚠️ [${userId}] Submit ignorado - acción esperada: 'login', recibida: '${action}'`);
                 return;
             }
 
             if (!username || !password) {
+                console.log(`❌ [${userId}] Campos incompletos - username: ${!!username}, password: ${!!password}`);
                 await context.sendActivity(
                     '❌ **Campos incompletos**\n\n' +
                     'Por favor, completa usuario y contraseña.'
@@ -419,13 +492,24 @@ class TeamsBot extends DialogBot {
                 return;
             }
 
-            console.log(`[${userId}] Procesando login desde tarjeta - Usuario: ${username}`);
+            console.log(`🚀 [${userId}] Procesando login desde tarjeta - Usuario: "${username}"`);
 
             await context.sendActivity({ type: 'typing' });
+            
+            console.log(`📡 [${userId}] Llamando a Nova API...`);
             const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
+            
+            console.log(`📨 [${userId}] Respuesta de autenticación:`, {
+                success: loginResponse.success,
+                message: loginResponse.message,
+                hasUserInfo: !!loginResponse.userInfo
+            });
 
             if (loginResponse.success) {
-                await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
+                console.log(`✅ [${userId}] Login exitoso, estableciendo autenticación...`);
+                
+                const authResult = await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
+                console.log(`🔐 [${userId}] Autenticación establecida: ${authResult}`);
                 
                 await context.sendActivity(
                     `✅ **¡Login exitoso desde tarjeta!**\n\n` +
@@ -434,7 +518,11 @@ class TeamsBot extends DialogBot {
                     `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n\n` +
                     `💬 Ya puedes usar el bot normalmente.`
                 );
+                
+                console.log(`🎉 [${userId}] Login completado exitosamente`);
             } else {
+                console.log(`❌ [${userId}] Login fallido: ${loginResponse.message}`);
+                
                 await context.sendActivity(
                     `❌ **Error de autenticación**\n\n` +
                     `${loginResponse.message}\n\n` +
@@ -443,14 +531,16 @@ class TeamsBot extends DialogBot {
                 await this.showLoginCard(context);
             }
 
+            console.log(`🏁 [${userId}] ===== FIN SUBMIT DE TARJETA =====\n`);
+
         } catch (error) {
-            console.error(`[${userId}] Error en submit de tarjeta:`, error);
+            console.error(`💥 [${userId}] Error crítico en submit de tarjeta:`, error);
             await context.sendActivity('❌ Error procesando tarjeta de login.');
         }
     }
 
     /**
-     * 🌐 AUTENTICAR CON NOVA API
+     * 🌐 AUTENTICAR CON NOVA API - VERSIÓN CORREGIDA
      */
     async authenticateWithNova(username, password) {
         try {
@@ -471,30 +561,44 @@ class TeamsBot extends DialogBot {
                 }
             );
 
-            console.log(`📡 Respuesta Nova (${response.status}):`, response.data);
+            console.log(`📡 Respuesta Nova (${response.status}):`, JSON.stringify(response.data, null, 2));
 
             if (response.data && response.data.info && response.data.info.length > 0) {
-                const userInfo = response.data.info[0];
+                const rawUserInfo = response.data.info[0];
                 
-                if (userInfo.EsValido === 0 && userInfo.Token) {
+                console.log(`🔍 Datos del usuario:`, {
+                    EsValido: rawUserInfo.EsValido,
+                    HasToken: !!rawUserInfo.Token,
+                    TokenLength: rawUserInfo.Token ? rawUserInfo.Token.length : 0,
+                    Mensaje: rawUserInfo.Mensaje
+                });
+                
+                // ✅ CORRECCIÓN: Limpiar datos y verificar correctamente
+                if (rawUserInfo.EsValido === 0 && rawUserInfo.Token && rawUserInfo.Token.trim().length > 0) {
+                    const cleanUserInfo = {
+                        usuario: rawUserInfo.CveUsuario ? rawUserInfo.CveUsuario.toString().trim() : username,
+                        nombre: rawUserInfo.Nombre ? rawUserInfo.Nombre.replace(/\t/g, '').trim() : 'Usuario',
+                        paterno: rawUserInfo.Paterno ? rawUserInfo.Paterno.replace(/\t/g, '').trim() : '',
+                        materno: rawUserInfo.Materno ? rawUserInfo.Materno.replace(/\t/g, '').trim() : '',
+                        token: rawUserInfo.Token.trim(),
+                        mensaje: rawUserInfo.Mensaje ? rawUserInfo.Mensaje.trim() : 'Login exitoso'
+                    };
+                    
+                    console.log(`✅ Datos limpiados:`, cleanUserInfo);
+                    
                     return {
                         success: true,
-                        userInfo: {
-                            usuario: userInfo.CveUsuario,
-                            nombre: userInfo.Nombre,
-                            paterno: userInfo.Paterno,
-                            materno: userInfo.Materno,
-                            token: userInfo.Token,
-                            mensaje: userInfo.Mensaje
-                        }
+                        userInfo: cleanUserInfo
                     };
                 } else {
+                    console.log(`❌ Login fallido - EsValido: ${rawUserInfo.EsValido}, Token: ${!!rawUserInfo.Token}`);
                     return {
                         success: false,
-                        message: userInfo.Mensaje || 'Credenciales inválidas'
+                        message: rawUserInfo.Mensaje || 'Credenciales inválidas'
                     };
                 }
             } else {
+                console.log('❌ Respuesta sin datos válidos');
                 return {
                     success: false,
                     message: 'Respuesta inesperada del servidor'
@@ -502,9 +606,10 @@ class TeamsBot extends DialogBot {
             }
 
         } catch (error) {
-            console.error('Error Nova API:', error.message);
+            console.error('❌ Error Nova API:', error.message);
             
             if (error.response) {
+                console.error('❌ Response error:', error.response.status, error.response.data);
                 return {
                     success: false,
                     message: `Error del servidor: ${error.response.status}`
@@ -543,7 +648,9 @@ class TeamsBot extends DialogBot {
             await this.userState.saveChanges(context);
             
             await context.sendActivity('✅ **Sesión cerrada**\n\nHasta luego!');
-            await this.showLoginOptions(context);
+            
+            // Mostrar login directamente
+            await this.showLoginCard(context);
             
         } catch (error) {
             console.error(`Error en logout:`, error);

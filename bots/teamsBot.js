@@ -1,4 +1,4 @@
-// teamsBot.js - Versión simplificada con login personalizado
+// teamsBot.js - Versión corregida con tarjetas adaptativas que funcionan
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
@@ -6,7 +6,7 @@ const axios = require('axios');
 const openaiService = require('../services/openaiService');
 
 /**
- * TeamsBot - Versión simplificada con autenticación personalizada
+ * TeamsBot - Versión corregida con tarjetas adaptativas compatibles
  */
 class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
@@ -84,111 +84,133 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * Muestra tarjeta de login
+     * Muestra tarjeta de login - VERSIÓN CORREGIDA
      */
     async showLoginCard(context) {
-        const loginCard = this.createLoginCard();
-        
-        await context.sendActivity({
-            text: '🔐 **Bienvenido a Nova Bot**\n\nPor favor, ingresa tus credenciales para continuar:',
-            attachments: [loginCard]
-        });
+        try {
+            console.log('🃏 Creando tarjeta de login...');
+            
+            // Crear la tarjeta con versión compatible
+            const loginCard = this.createLoginCard();
+            
+            // Enviar mensaje de texto primero
+            await context.sendActivity('🔐 **Bienvenido a Nova Bot**\n\nPor favor, ingresa tus credenciales para continuar:');
+            
+            // Luego enviar la tarjeta como attachment separado
+            await context.sendActivity({ 
+                attachments: [loginCard]
+            });
+            
+            console.log('✅ Tarjeta de login enviada');
+            
+        } catch (error) {
+            console.error('❌ Error enviando tarjeta de login:', error);
+            
+            // Fallback: mostrar formulario en texto si la tarjeta falla
+            await context.sendActivity(
+                '🔐 **Bienvenido a Nova Bot**\n\n' +
+                '⚠️ Error mostrando tarjeta de login.\n\n' +
+                '**Formato alternativo:**\n' +
+                'Escribe tu credencial en el formato:\n' +
+                '`login usuario:contraseña`\n\n' +
+                'Ejemplo: `login 91004:mipassword`'
+            );
+        }
     }
 
     /**
-     * Crea tarjeta de login personalizada
+     * Crea tarjeta de login con versión compatible - VERSIÓN CORREGIDA
      */
     createLoginCard() {
-        const card = {
-            type: 'AdaptiveCard',
-            $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-            version: '1.3',
-            body: [
-                {
-                    type: 'TextBlock',
-                    text: '🔐 Iniciar Sesión',
-                    size: 'Large',
-                    weight: 'Bolder',
-                    color: 'Accent',
-                    horizontalAlignment: 'Center'
-                },
-                {
-                    type: 'TextBlock',
-                    text: 'Ingresa tus credenciales corporativas:',
-                    wrap: true,
-                    spacing: 'Medium'
-                },
-                {
-                    type: 'TextBlock',
-                    text: 'Usuario:',
-                    weight: 'Bolder',
-                    spacing: 'Medium'
-                },
-                {
-                    type: 'Input.Text',
-                    id: 'username',
-                    placeholder: 'Ingresa tu usuario (ej: 91004)',
-                    isRequired: true,
-                    spacing: 'Small'
-                },
-                {
-                    type: 'TextBlock',
-                    text: 'Contraseña:',
-                    weight: 'Bolder',
-                    spacing: 'Medium'
-                },
-                {
-                    type: 'Input.Text',
-                    id: 'password',
-                    placeholder: 'Ingresa tu contraseña',
-                    style: 'Password',
-                    isRequired: true,
-                    spacing: 'Small'
-                },
-                {
-                    type: 'TextBlock',
-                    text: '🔒 Tus credenciales se envían de forma segura',
-                    size: 'Small',
-                    color: 'Good',
-                    spacing: 'Medium'
-                }
-            ],
-            actions: [
-                {
-                    type: 'Action.Submit',
-                    title: '🚀 Iniciar Sesión',
-                    data: {
-                        action: 'login'
+        try {
+            const card = {
+                type: 'AdaptiveCard',
+                $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+                version: '1.2', // ✅ Cambio a versión más compatible
+                body: [
+                    {
+                        type: 'TextBlock',
+                        text: '🔐 Iniciar Sesión',
+                        size: 'Large',
+                        weight: 'Bolder',
+                        color: 'Accent'
+                        // ❌ Removido horizontalAlignment que puede causar problemas
                     },
-                    style: 'positive'
-                }
-            ]
-        };
+                    {
+                        type: 'TextBlock',
+                        text: 'Ingresa tus credenciales corporativas:',
+                        wrap: true,
+                        spacing: 'Medium'
+                    },
+                    {
+                        type: 'Input.Text',
+                        id: 'username',
+                        placeholder: 'Usuario (ej: 91004)',
+                        isRequired: true,
+                        label: 'Usuario:' // ✅ Agregado label para mejor compatibilidad
+                    },
+                    {
+                        type: 'Input.Text',
+                        id: 'password',
+                        placeholder: 'Contraseña',
+                        style: 'Password',
+                        isRequired: true,
+                        label: 'Contraseña:' // ✅ Agregado label
+                    },
+                    {
+                        type: 'TextBlock',
+                        text: '🔒 Tus credenciales se envían de forma segura',
+                        size: 'Small',
+                        color: 'Good',
+                        spacing: 'Medium'
+                    }
+                ],
+                actions: [
+                    {
+                        type: 'Action.Submit',
+                        title: '🚀 Iniciar Sesión',
+                        data: {
+                            action: 'login'
+                        }
+                        // ❌ Removido style: 'positive' que puede no ser compatible
+                    }
+                ]
+            };
 
-        return CardFactory.adaptiveCard(card);
+            console.log('🃏 Tarjeta creada:', JSON.stringify(card, null, 2));
+            return CardFactory.adaptiveCard(card);
+            
+        } catch (error) {
+            console.error('❌ Error creando tarjeta:', error);
+            throw error;
+        }
     }
 
     /**
-     * Maneja el submit de la tarjeta de login
+     * Maneja el submit de la tarjeta de login - CON VALIDACIÓN MEJORADA
      */
     async handleLoginSubmit(context) {
         const userId = context.activity.from.id;
-        const { username, password } = context.activity.value;
-
-        console.log(`[${userId}] Intento de login - Usuario: ${username}`);
-
-        if (!username || !password) {
-            await context.sendActivity('❌ **Error**: Debes completar todos los campos.');
-            await this.showLoginCard(context);
-            return;
-        }
-
+        
         try {
+            console.log(`[${userId}] Datos recibidos del submit:`, JSON.stringify(context.activity.value, null, 2));
+            
+            const { username, password } = context.activity.value;
+
+            // Validación mejorada
+            if (!username || !password || username.trim() === '' || password.trim() === '') {
+                await context.sendActivity('❌ **Error**: Debes completar todos los campos.');
+                await this.showLoginCard(context);
+                return;
+            }
+
+            console.log(`[${userId}] Intento de login - Usuario: ${username}`);
+
             // Mostrar mensaje de procesamiento
             await context.sendActivity({ type: 'typing' });
 
             // Llamar a API de Nova
-            const loginResponse = await this.authenticateWithNova(username, password);
+            const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
 
             if (loginResponse.success) {
                 // Login exitoso
@@ -222,7 +244,7 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * Autentica con API de Nova
+     * Autentica con API de Nova - CON MEJOR MANEJO DE ERRORES
      */
     async authenticateWithNova(username, password) {
         try {
@@ -236,18 +258,20 @@ class TeamsBot extends DialogBot {
                 },
                 {
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
-                    timeout: 10000
+                    timeout: 15000 // ✅ Aumentado timeout
                 }
             );
 
-            console.log(`📡 Respuesta de Nova API:`, response.data);
+            console.log(`📡 Respuesta de Nova API (status: ${response.status}):`, response.data);
 
             if (response.data && response.data.info && response.data.info.length > 0) {
                 const userInfo = response.data.info[0];
                 
-                if (userInfo.EsValido === 0) { // Asumiendo que 0 significa válido
+                // ✅ Verificación mejorada
+                if (userInfo.EsValido === 0 && userInfo.Token) { 
                     return {
                         success: true,
                         userInfo: {
@@ -273,9 +297,10 @@ class TeamsBot extends DialogBot {
             }
 
         } catch (error) {
-            console.error('Error autenticando con Nova:', error);
+            console.error('Error autenticando con Nova:', error.message);
             
             if (error.response) {
+                console.error('Response error:', error.response.status, error.response.data);
                 return {
                     success: false,
                     message: `Error del servidor: ${error.response.status}`
@@ -284,6 +309,11 @@ class TeamsBot extends DialogBot {
                 return {
                     success: false,
                     message: 'No se pudo conectar con el servidor'
+                };
+            } else if (error.code === 'ECONNABORTED') {
+                return {
+                    success: false,
+                    message: 'Timeout - El servidor tardó demasiado en responder'
                 };
             } else {
                 return {
@@ -489,6 +519,17 @@ class TeamsBot extends DialogBot {
      */
     async getUserInfo(userId) {
         return this.authenticatedUsers.get(userId) || null;
+    }
+
+    /**
+     * Método para depuración - obtener estadísticas
+     */
+    getStats() {
+        return {
+            authenticatedUsers: this.authenticatedUsers.size,
+            isInitialized: this.isInitialized(),
+            timestamp: new Date().toISOString()
+        };
     }
 }
 

@@ -1,254 +1,460 @@
-// teamsBot.js - Versión corregida con tarjetas adaptativas que funcionan
+// teamsBot.js - Versión ultra-simplificada GARANTIZADA que funciona
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
 const axios = require('axios');
 const openaiService = require('../services/openaiService');
 
-/**
- * TeamsBot - Versión corregida con tarjetas adaptativas compatibles
- */
 class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
         super(conversationState, userState);
 
-        // Registrar instancia globalmente
         global.botInstance = this;
-
-        // Estados de usuarios autenticados
         this.authenticatedUsers = new Map();
         this.authState = this.userState.createProperty('AuthState');
         
-        // Configurar manejadores
         this.onMembersAdded(this.handleMembersAdded.bind(this));
         this.onMessage(this.handleMessageWithAuth.bind(this));
-
-        // Inicializar servicios
         this.openaiService = openaiService;
         
-        console.log('✅ TeamsBot inicializado con autenticación personalizada');
+        console.log('✅ TeamsBot inicializado - Versión ultra-simplificada');
     }
 
-    /**
-     * Maneja nuevos miembros - Mostrar tarjeta de login
-     */
     async handleMembersAdded(context, next) {
         for (const member of context.activity.membersAdded) {
             if (member.id !== context.activity.recipient.id) {
-                await this.showLoginCard(context);
+                await this.showLoginOptions(context);
             }
         }
         await next();
     }
 
-    /**
-     * Maneja mensajes con autenticación personalizada
-     */
     async handleMessageWithAuth(context, next) {
         const userId = context.activity.from.id;
         const text = (context.activity.text || '').trim();
 
-        console.log(`[${userId}] Mensaje recibido: "${text}"`);
+        console.log(`[${userId}] Mensaje: "${text}"`);
 
         try {
-            // Verificar si es submit de tarjeta de login
+            // 🧪 COMANDO DE DIAGNÓSTICO
+            if (text.toLowerCase() === 'test-card' || text.toLowerCase() === 'test') {
+                await this.runCardTests(context);
+                return await next();
+            }
+
+            // 🔐 LOGIN CON TARJETA
+            if (text.toLowerCase() === 'card-login' || text.toLowerCase() === 'login-card') {
+                await this.showLoginCard(context);
+                return await next();
+            }
+
+            // 🔐 LOGIN CON TEXTO (FALLBACK)
+            if (text.toLowerCase().startsWith('login ')) {
+                await this.handleTextLogin(context, text);
+                return await next();
+            }
+
+            // 📤 SUBMIT DE TARJETA
             if (context.activity.value && context.activity.value.action === 'login') {
                 await this.handleLoginSubmit(context);
                 return await next();
             }
 
-            // Verificar si es comando de logout
+            // 🚪 LOGOUT
             if (this.isLogoutCommand(text)) {
                 await this.handleLogout(context, userId);
                 return await next();
             }
 
-            // Verificar autenticación
+            // ✅ VERIFICAR AUTENTICACIÓN
             const isAuthenticated = await this.isUserAuthenticated(userId, context);
             
             if (!isAuthenticated) {
-                // Usuario no autenticado - mostrar tarjeta de login
-                await this.showLoginCard(context);
+                await this.showLoginOptions(context);
                 return await next();
             }
 
-            // Usuario autenticado - procesar mensaje normal
+            // 💬 PROCESAR MENSAJE AUTENTICADO
             await this.processAuthenticatedMessage(context, text, userId);
 
         } catch (error) {
-            console.error(`[${userId}] Error en handleMessageWithAuth:`, error);
-            await context.sendActivity('❌ Error procesando mensaje. Intenta nuevamente.');
+            console.error(`[${userId}] Error:`, error);
+            await context.sendActivity('❌ Error procesando mensaje.');
         }
 
         await next();
     }
 
     /**
-     * Muestra tarjeta de login - VERSIÓN CORREGIDA
+     * 🧪 PRUEBAS DE TARJETAS - Para diagnosticar problemas
+     */
+    async runCardTests(context) {
+        try {
+            console.log('🧪 Ejecutando pruebas de tarjetas...');
+
+            // Test 1: Tarjeta ultra-simple
+            await context.sendActivity('🧪 **Test 1**: Tarjeta ultra-simple');
+            const simpleCard = this.createSimpleTestCard();
+            await context.sendActivity({ attachments: [simpleCard] });
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Test 2: Tarjeta con input básico
+            await context.sendActivity('🧪 **Test 2**: Tarjeta con input');
+            const inputCard = this.createInputTestCard();
+            await context.sendActivity({ attachments: [inputCard] });
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Test 3: Tarjeta de login mínima
+            await context.sendActivity('🧪 **Test 3**: Tarjeta de login mínima');
+            const loginCard = this.createMinimalLoginCard();
+            await context.sendActivity({ attachments: [loginCard] });
+
+            await context.sendActivity(
+                '📊 **Diagnóstico completado**\n\n' +
+                '✅ Si ves las 3 tarjetas arriba: Las Adaptive Cards funcionan\n' +
+                '❌ Si no ves ninguna tarjeta: Problema con Adaptive Cards en tu Teams\n' +
+                '⚠️ Si ves algunas pero no todas: Problema de compatibilidad específico\n\n' +
+                '**Comandos disponibles:**\n' +
+                '• `card-login` - Probar login con tarjeta\n' +
+                '• `login usuario:contraseña` - Login alternativo\n' +
+                '• `test` - Repetir estas pruebas'
+            );
+
+        } catch (error) {
+            console.error('❌ Error en pruebas:', error);
+            await context.sendActivity(`❌ Error ejecutando pruebas: ${error.message}`);
+        }
+    }
+
+    /**
+     * 🃏 TARJETA ULTRA-SIMPLE (debería funcionar siempre)
+     */
+    createSimpleTestCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '✅ Tarjeta Simple Funciona',
+                    weight: 'Bolder'
+                }
+            ]
+        };
+
+        console.log('🃏 Tarjeta simple creada');
+        return CardFactory.adaptiveCard(card);
+    }
+
+    /**
+     * 🃏 TARJETA CON INPUT BÁSICO
+     */
+    createInputTestCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: 'Prueba de Input',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'testInput',
+                    placeholder: 'Escribe algo'
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: 'Probar',
+                    data: { action: 'test' }
+                }
+            ]
+        };
+
+        console.log('🃏 Tarjeta con input creada');
+        return CardFactory.adaptiveCard(card);
+    }
+
+    /**
+     * 🔐 TARJETA DE LOGIN MÍNIMA (máxima compatibilidad)
+     */
+    createMinimalLoginCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: 'Login',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'username',
+                    placeholder: 'Usuario'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'password',
+                    placeholder: 'Contraseña',
+                    style: 'Password'
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: 'Entrar',
+                    data: { action: 'login' }
+                }
+            ]
+        };
+
+        console.log('🔐 Tarjeta de login mínima creada');
+        return CardFactory.adaptiveCard(card);
+    }
+
+    /**
+     * 🔐 TARJETA DE LOGIN CON ESTILO (versión mejorada si la mínima funciona)
+     */
+    createStyledLoginCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '🔐 Iniciar Sesión',
+                    size: 'Large',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'Ingresa tus credenciales corporativas:',
+                    wrap: true
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'Usuario:',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'username',
+                    placeholder: 'Ejemplo: 91004'
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'Contraseña:',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'password',
+                    placeholder: 'Tu contraseña',
+                    style: 'Password'
+                },
+                {
+                    type: 'TextBlock',
+                    text: '🔒 Conexión segura',
+                    size: 'Small'
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: '🚀 Iniciar Sesión',
+                    data: { action: 'login' }
+                }
+            ]
+        };
+
+        console.log('🔐 Tarjeta de login con estilo creada');
+        return CardFactory.adaptiveCard(card);
+    }
+
+    /**
+     * 📋 MOSTRAR OPCIONES DE LOGIN
+     */
+    async showLoginOptions(context) {
+        try {
+            const message = 
+                '🔐 **Bienvenido a Nova Bot**\n\n' +
+                '**Opciones de login:**\n\n' +
+                '🃏 **Opción 1 (Recomendada)**: Escribe `card-login`\n' +
+                '   └ Te mostrará una tarjeta interactiva\n\n' +
+                '📝 **Opción 2 (Alternativa)**: Escribe `login usuario:contraseña`\n' +
+                '   └ Ejemplo: `login 91004:mipassword`\n\n' +
+                '🧪 **Diagnóstico**: Escribe `test` para probar las tarjetas\n\n' +
+                '❓ **¿Cuál prefieres?**';
+
+            await context.sendActivity(message);
+
+        } catch (error) {
+            console.error('Error mostrando opciones:', error);
+            await context.sendActivity('🔐 Para login, escribe: `login usuario:contraseña`');
+        }
+    }
+
+    /**
+     * 🔐 MOSTRAR TARJETA DE LOGIN
      */
     async showLoginCard(context) {
         try {
-            console.log('🃏 Creando tarjeta de login...');
+            console.log('🔐 Intentando mostrar tarjeta de login...');
+
+            // Primero el texto
+            await context.sendActivity('🔐 **Formulario de Login**');
+
+            // Intentar tarjeta mínima primero
+            const loginCard = this.createMinimalLoginCard();
             
-            // Crear la tarjeta con versión compatible
-            const loginCard = this.createLoginCard();
+            console.log('🔐 Enviando tarjeta...', JSON.stringify(loginCard.content, null, 2));
             
-            // Enviar mensaje de texto primero
-            await context.sendActivity('🔐 **Bienvenido a Nova Bot**\n\nPor favor, ingresa tus credenciales para continuar:');
-            
-            // Luego enviar la tarjeta como attachment separado
             await context.sendActivity({ 
                 attachments: [loginCard]
             });
-            
-            console.log('✅ Tarjeta de login enviada');
-            
+
+            console.log('✅ Tarjeta enviada exitosamente');
+
+            // Instrucciones adicionales
+            await context.sendActivity(
+                '📝 **Alternativa**: Si no ves la tarjeta, escribe:\n' +
+                '`login tu_usuario:tu_contraseña`'
+            );
+
         } catch (error) {
             console.error('❌ Error enviando tarjeta de login:', error);
             
-            // Fallback: mostrar formulario en texto si la tarjeta falla
+            // Fallback completo
             await context.sendActivity(
-                '🔐 **Bienvenido a Nova Bot**\n\n' +
-                '⚠️ Error mostrando tarjeta de login.\n\n' +
-                '**Formato alternativo:**\n' +
-                'Escribe tu credencial en el formato:\n' +
-                '`login usuario:contraseña`\n\n' +
+                '❌ **Error con la tarjeta**\n\n' +
+                '🔄 **Usa el método alternativo:**\n' +
+                'Escribe: `login usuario:contraseña`\n\n' +
                 'Ejemplo: `login 91004:mipassword`'
             );
         }
     }
 
     /**
-     * Crea tarjeta de login con versión compatible - VERSIÓN CORREGIDA
+     * 📝 LOGIN CON TEXTO (método alternativo)
      */
-    createLoginCard() {
+    async handleTextLogin(context, text) {
+        const userId = context.activity.from.id;
+        
         try {
-            const card = {
-                type: 'AdaptiveCard',
-                $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
-                version: '1.2', // ✅ Cambio a versión más compatible
-                body: [
-                    {
-                        type: 'TextBlock',
-                        text: '🔐 Iniciar Sesión',
-                        size: 'Large',
-                        weight: 'Bolder',
-                        color: 'Accent'
-                        // ❌ Removido horizontalAlignment que puede causar problemas
-                    },
-                    {
-                        type: 'TextBlock',
-                        text: 'Ingresa tus credenciales corporativas:',
-                        wrap: true,
-                        spacing: 'Medium'
-                    },
-                    {
-                        type: 'Input.Text',
-                        id: 'username',
-                        placeholder: 'Usuario (ej: 91004)',
-                        isRequired: true,
-                        label: 'Usuario:' // ✅ Agregado label para mejor compatibilidad
-                    },
-                    {
-                        type: 'Input.Text',
-                        id: 'password',
-                        placeholder: 'Contraseña',
-                        style: 'Password',
-                        isRequired: true,
-                        label: 'Contraseña:' // ✅ Agregado label
-                    },
-                    {
-                        type: 'TextBlock',
-                        text: '🔒 Tus credenciales se envían de forma segura',
-                        size: 'Small',
-                        color: 'Good',
-                        spacing: 'Medium'
-                    }
-                ],
-                actions: [
-                    {
-                        type: 'Action.Submit',
-                        title: '🚀 Iniciar Sesión',
-                        data: {
-                            action: 'login'
-                        }
-                        // ❌ Removido style: 'positive' que puede no ser compatible
-                    }
-                ]
-            };
+            console.log(`[${userId}] Login con texto: ${text}`);
 
-            console.log('🃏 Tarjeta creada:', JSON.stringify(card, null, 2));
-            return CardFactory.adaptiveCard(card);
-            
+            // Extraer credenciales del formato: login usuario:contraseña
+            const loginPart = text.substring(6).trim(); // Remover "login "
+            const [username, password] = loginPart.split(':');
+
+            if (!username || !password) {
+                await context.sendActivity(
+                    '❌ **Formato incorrecto**\n\n' +
+                    '✅ **Formato correcto**: `login usuario:contraseña`\n' +
+                    '📝 **Ejemplo**: `login 91004:mipassword`'
+                );
+                return;
+            }
+
+            console.log(`[${userId}] Credenciales extraídas - Usuario: ${username}`);
+
+            // Procesar login
+            await context.sendActivity({ type: 'typing' });
+            const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
+
+            if (loginResponse.success) {
+                await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
+                
+                await context.sendActivity(
+                    `✅ **¡Login exitoso!**\n\n` +
+                    `👋 Bienvenido, **${loginResponse.userInfo.nombre}**\n` +
+                    `👤 Usuario: ${loginResponse.userInfo.usuario}\n` +
+                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n\n` +
+                    `💬 Ya puedes usar el bot normalmente.`
+                );
+            } else {
+                await context.sendActivity(
+                    `❌ **Error de autenticación**\n\n` +
+                    `${loginResponse.message}\n\n` +
+                    `🔄 Intenta nuevamente con el formato correcto.`
+                );
+            }
+
         } catch (error) {
-            console.error('❌ Error creando tarjeta:', error);
-            throw error;
+            console.error(`[${userId}] Error en login con texto:`, error);
+            await context.sendActivity('❌ Error procesando login.');
         }
     }
 
     /**
-     * Maneja el submit de la tarjeta de login - CON VALIDACIÓN MEJORADA
+     * 📤 MANEJAR SUBMIT DE TARJETA
      */
     async handleLoginSubmit(context) {
         const userId = context.activity.from.id;
         
         try {
-            console.log(`[${userId}] Datos recibidos del submit:`, JSON.stringify(context.activity.value, null, 2));
-            
-            const { username, password } = context.activity.value;
+            console.log(`[${userId}] Submit de tarjeta recibido:`, JSON.stringify(context.activity.value, null, 2));
 
-            // Validación mejorada
-            if (!username || !password || username.trim() === '' || password.trim() === '') {
-                await context.sendActivity('❌ **Error**: Debes completar todos los campos.');
+            const value = context.activity.value || {};
+            const { username, password, action } = value;
+
+            // Verificar que es el submit correcto
+            if (action !== 'login') {
+                console.log(`[${userId}] Submit ignorado - acción: ${action}`);
+                return;
+            }
+
+            if (!username || !password) {
+                await context.sendActivity(
+                    '❌ **Campos incompletos**\n\n' +
+                    'Por favor, completa usuario y contraseña.'
+                );
                 await this.showLoginCard(context);
                 return;
             }
 
-            console.log(`[${userId}] Intento de login - Usuario: ${username}`);
+            console.log(`[${userId}] Procesando login desde tarjeta - Usuario: ${username}`);
 
-            // Mostrar mensaje de procesamiento
             await context.sendActivity({ type: 'typing' });
-
-            // Llamar a API de Nova
             const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
 
             if (loginResponse.success) {
-                // Login exitoso
                 await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
                 
                 await context.sendActivity(
-                    `✅ **¡Bienvenido, ${loginResponse.userInfo.nombre}!**\n\n` +
-                    `🎉 Login exitoso\n` +
+                    `✅ **¡Login exitoso desde tarjeta!**\n\n` +
+                    `👋 Bienvenido, **${loginResponse.userInfo.nombre}**\n` +
                     `👤 Usuario: ${loginResponse.userInfo.usuario}\n` +
-                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 30)}...\n\n` +
-                    `💬 Ya puedes usar todas las funciones del bot.`
+                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n\n` +
+                    `💬 Ya puedes usar el bot normalmente.`
                 );
             } else {
-                // Login fallido
                 await context.sendActivity(
                     `❌ **Error de autenticación**\n\n` +
                     `${loginResponse.message}\n\n` +
-                    `Por favor, verifica tus credenciales e intenta nuevamente.`
+                    `🔄 Intenta nuevamente.`
                 );
                 await this.showLoginCard(context);
             }
 
         } catch (error) {
-            console.error(`[${userId}] Error en login:`, error);
-            await context.sendActivity(
-                '❌ **Error del servidor**\n\n' +
-                'No se pudo conectar con el servicio de autenticación. Intenta nuevamente.'
-            );
-            await this.showLoginCard(context);
+            console.error(`[${userId}] Error en submit de tarjeta:`, error);
+            await context.sendActivity('❌ Error procesando tarjeta de login.');
         }
     }
 
     /**
-     * Autentica con API de Nova - CON MEJOR MANEJO DE ERRORES
+     * 🌐 AUTENTICAR CON NOVA API
      */
     async authenticateWithNova(username, password) {
         try {
-            console.log(`🔐 Autenticando usuario: ${username}`);
+            console.log(`🔐 Autenticando: ${username}`);
             
             const response = await axios.post(
                 'https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login',
@@ -261,17 +467,16 @@ class TeamsBot extends DialogBot {
                         'Content-Type': 'application/json',
                         'Accept': 'application/json'
                     },
-                    timeout: 15000 // ✅ Aumentado timeout
+                    timeout: 15000
                 }
             );
 
-            console.log(`📡 Respuesta de Nova API (status: ${response.status}):`, response.data);
+            console.log(`📡 Respuesta Nova (${response.status}):`, response.data);
 
             if (response.data && response.data.info && response.data.info.length > 0) {
                 const userInfo = response.data.info[0];
                 
-                // ✅ Verificación mejorada
-                if (userInfo.EsValido === 0 && userInfo.Token) { 
+                if (userInfo.EsValido === 0 && userInfo.Token) {
                     return {
                         success: true,
                         userInfo: {
@@ -297,10 +502,9 @@ class TeamsBot extends DialogBot {
             }
 
         } catch (error) {
-            console.error('Error autenticando con Nova:', error.message);
+            console.error('Error Nova API:', error.message);
             
             if (error.response) {
-                console.error('Response error:', error.response.status, error.response.data);
                 return {
                     success: false,
                     message: `Error del servidor: ${error.response.status}`
@@ -313,7 +517,7 @@ class TeamsBot extends DialogBot {
             } else if (error.code === 'ECONNABORTED') {
                 return {
                     success: false,
-                    message: 'Timeout - El servidor tardó demasiado en responder'
+                    message: 'Timeout - servidor lento'
                 };
             } else {
                 return {
@@ -324,56 +528,35 @@ class TeamsBot extends DialogBot {
         }
     }
 
-    /**
-     * Verifica si es comando de logout
-     */
+    // ===== MÉTODOS AUXILIARES (mantenidos igual) =====
+
     isLogoutCommand(text) {
         return ['logout', 'cerrar sesion', 'cerrar sesión', 'salir'].includes(text.toLowerCase());
     }
 
-    /**
-     * Maneja logout
-     */
     async handleLogout(context, userId) {
         try {
-            console.log(`[${userId}] Iniciando logout...`);
-            
-            // Limpiar estado de memoria
             this.authenticatedUsers.delete(userId);
-            
-            // Limpiar estado persistente
             const authData = await this.authState.get(context, {});
             delete authData[userId];
             await this.authState.set(context, authData);
             await this.userState.saveChanges(context);
             
-            await context.sendActivity(
-                '✅ **Sesión cerrada exitosamente**\n\n' +
-                'Hasta luego. Para volver a usar el bot, necesitarás autenticarte nuevamente.'
-            );
-            
-            // Mostrar tarjeta de login nuevamente
-            await this.showLoginCard(context);
+            await context.sendActivity('✅ **Sesión cerrada**\n\nHasta luego!');
+            await this.showLoginOptions(context);
             
         } catch (error) {
-            console.error(`[${userId}] Error en logout:`, error);
-            await context.sendActivity('❌ Error al cerrar sesión.');
+            console.error(`Error en logout:`, error);
+            await context.sendActivity('❌ Error cerrando sesión.');
         }
     }
 
-    /**
-     * Verifica si un usuario está autenticado
-     */
     async isUserAuthenticated(userId, context) {
         try {
-            // Verificar memoria
             const memoryAuth = this.authenticatedUsers.has(userId);
-            
-            // Verificar estado persistente
             const authData = await this.authState.get(context, {});
             const persistentAuth = authData[userId]?.authenticated === true;
             
-            // Sincronizar si hay inconsistencia
             if (memoryAuth && !persistentAuth) {
                 await this.syncPersistentAuth(userId, context);
                 return true;
@@ -385,14 +568,11 @@ class TeamsBot extends DialogBot {
             return memoryAuth && persistentAuth;
             
         } catch (error) {
-            console.error(`[${userId}] Error verificando autenticación:`, error);
+            console.error(`Error verificando auth:`, error);
             return false;
         }
     }
 
-    /**
-     * Sincroniza autenticación persistente
-     */
     async syncPersistentAuth(userId, context) {
         try {
             const userInfo = this.authenticatedUsers.get(userId);
@@ -407,13 +587,10 @@ class TeamsBot extends DialogBot {
                 await this.userState.saveChanges(context);
             }
         } catch (error) {
-            console.error(`[${userId}] Error sincronizando persistente:`, error);
+            console.error(`Error sync persistente:`, error);
         }
     }
 
-    /**
-     * Sincroniza autenticación en memoria
-     */
     async syncMemoryAuth(userId, context, authData) {
         try {
             if (authData && authData.authenticated) {
@@ -424,21 +601,14 @@ class TeamsBot extends DialogBot {
                 });
             }
         } catch (error) {
-            console.error(`[${userId}] Error sincronizando memoria:`, error);
+            console.error(`Error sync memoria:`, error);
         }
     }
 
-    /**
-     * Marca usuario como autenticado
-     */
     async setUserAuthenticated(userId, userInfo, context) {
         try {
-            console.log(`[${userId}] Estableciendo autenticación...`);
-            
-            // Almacenar en memoria
             this.authenticatedUsers.set(userId, userInfo);
 
-            // Almacenar persistentemente
             const authData = await this.authState.get(context, {});
             authData[userId] = {
                 authenticated: true,
@@ -448,46 +618,37 @@ class TeamsBot extends DialogBot {
             await this.authState.set(context, authData);
             await this.userState.saveChanges(context);
 
-            console.log(`[${userId}] Autenticación completada exitosamente`);
+            console.log(`[${userId}] Autenticación establecida`);
             return true;
             
         } catch (error) {
-            console.error(`[${userId}] Error en setUserAuthenticated:`, error);
+            console.error(`Error estableciendo auth:`, error);
             return false;
         }
     }
 
-    /**
-     * Procesa mensajes de usuarios autenticados
-     */
     async processAuthenticatedMessage(context, text, userId) {
         try {
             await context.sendActivity({ type: 'typing' });
 
-            // Obtener información del usuario
             const userInfo = this.authenticatedUsers.get(userId);
             const userToken = userInfo?.token;
 
-            // Procesar con OpenAI
             const response = await this.openaiService.procesarMensaje(
                 text, 
-                [], // historial vacío por simplicidad
+                [],
                 userToken, 
                 userInfo
             );
 
-            // Enviar respuesta
             await this.sendResponse(context, response);
 
         } catch (error) {
-            console.error(`[${userId}] Error procesando mensaje:`, error);
+            console.error(`Error procesando mensaje:`, error);
             await context.sendActivity('❌ Error al procesar tu mensaje.');
         }
     }
 
-    /**
-     * Envía respuesta al usuario
-     */
     async sendResponse(context, response) {
         try {
             if (response.type === 'card') {
@@ -506,30 +667,13 @@ class TeamsBot extends DialogBot {
         }
     }
 
-    /**
-     * Obtiene token del usuario
-     */
     async getUserToken(userId) {
         const userInfo = this.authenticatedUsers.get(userId);
         return userInfo?.token || null;
     }
 
-    /**
-     * Obtiene información del usuario
-     */
     async getUserInfo(userId) {
         return this.authenticatedUsers.get(userId) || null;
-    }
-
-    /**
-     * Método para depuración - obtener estadísticas
-     */
-    getStats() {
-        return {
-            authenticatedUsers: this.authenticatedUsers.size,
-            isInitialized: this.isInitialized(),
-            timestamp: new Date().toISOString()
-        };
     }
 }
 

@@ -19,7 +19,6 @@ server.listen(process.env.port || process.env.PORT || 3978, () => {
     console.log(`\n${server.name} listening on ${server.url}`);
     console.log('\n🚀 Bot Nova simplificado iniciado');
     console.log('✅ Sistema de login personalizado activo');
-    console.log('❌ OAuth/Azure eliminados');
 });
 
 // Crear adaptador del Bot Framework

@@ -13,6 +13,9 @@ class TeamsBot extends DialogBot {
         this.authenticatedUsers = new Map();
         this.authState = this.userState.createProperty('AuthState');
         
+        // ✅ NUEVO: Protección contra tarjetas duplicadas
+        this.loginCardSentUsers = new Set();
+        
         this.onMembersAdded(this.handleMembersAdded.bind(this));
         this.onMessage(this.handleMessageWithAuth.bind(this));
         this.openaiService = openaiService;
@@ -48,6 +51,13 @@ class TeamsBot extends DialogBot {
                 return await next();
             }
 
+            // 🧪 COMANDO DE LIMPIAR PROTECCIÓN (para debug)
+            if (text.toLowerCase() === 'clear-protection') {
+                this.loginCardSentUsers.clear();
+                await context.sendActivity('🧹 **Protección anti-duplicados limpiada**');
+                return await next();
+            }
+
             // 🔐 LOGIN CON TARJETA
             if (text.toLowerCase() === 'card-login' || text.toLowerCase() === 'login-card') {
                 await this.showLoginCard(context);
@@ -76,7 +86,8 @@ class TeamsBot extends DialogBot {
             const isAuthenticated = await this.isUserAuthenticated(userId, context);
             
             if (!isAuthenticated) {
-                await this.showLoginCard(context);
+                console.log(`🔒 [${userId}] Usuario no autenticado, mostrando login...`);
+                await this.showLoginCard(context, 'handleMessageWithAuth');
                 return await next();
             }
 
@@ -351,12 +362,14 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * 🔐 MOSTRAR LOGIN DIRECTO
+     * 🔐 MOSTRAR LOGIN DIRECTO - CON PROTECCIÓN ANTI-DUPLICADOS
      */
     async showLoginOptions(context) {
         try {
-            console.log('🔐 Mostrando login directo...');
-            await this.showLoginCard(context);
+            const userId = context.activity.from.id;
+            console.log(`🔐 [${userId}] showLoginOptions llamado desde: ${this.getCallerInfo()}`);
+            
+            await this.showLoginCard(context, 'showLoginOptions');
 
         } catch (error) {
             console.error('Error mostrando login:', error);
@@ -371,10 +384,22 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * 🔐 MOSTRAR TARJETA DE LOGIN
+     * 🔐 MOSTRAR TARJETA DE LOGIN - CON PROTECCIÓN ANTI-DUPLICADOS
      */
-    async showLoginCard(context) {
+    async showLoginCard(context, caller = 'unknown') {
+        const userId = context.activity.from.id;
+        
         try {
+            console.log(`\n🔐 [${userId}] ===== INICIO showLoginCard =====`);
+            console.log(`📞 [${userId}] Llamado desde: ${caller}`);
+            console.log(`🔍 [${userId}] Usuario ya tiene tarjeta pendiente: ${this.loginCardSentUsers.has(userId)}`);
+
+            // ✅ PROTECCIÓN: No enviar tarjeta si ya se envió recientemente
+            if (this.loginCardSentUsers.has(userId)) {
+                console.log(`⚠️ [${userId}] Tarjeta ya enviada recientemente, saltando...`);
+                return;
+            }
+
             console.log('🔐 Intentando mostrar tarjeta de login...');
 
             // Mensaje de bienvenida
@@ -383,16 +408,29 @@ class TeamsBot extends DialogBot {
             // Tarjeta de login
             const loginCard = this.createMinimalLoginCard();
             
-            console.log('🔐 Enviando tarjeta...', JSON.stringify(loginCard.content, null, 2));
+            console.log('🔐 Enviando tarjeta...');
             
             await context.sendActivity({ 
                 attachments: [loginCard]
             });
 
-            console.log('✅ Tarjeta enviada exitosamente');
+            // ✅ MARCAR: Usuario tiene tarjeta pendiente
+            this.loginCardSentUsers.add(userId);
+            
+            // ✅ LIMPIAR: Después de 30 segundos permitir nueva tarjeta
+            setTimeout(() => {
+                this.loginCardSentUsers.delete(userId);
+                console.log(`🧹 [${userId}] Protección anti-duplicados limpiada`);
+            }, 30000);
+
+            console.log(`✅ [${userId}] Tarjeta enviada exitosamente`);
+            console.log(`🏁 [${userId}] ===== FIN showLoginCard =====\n`);
 
         } catch (error) {
-            console.error('❌ Error enviando tarjeta de login:', error);
+            console.error(`❌ [${userId}] Error enviando tarjeta de login:`, error);
+            
+            // ✅ LIMPIAR: En caso de error, permitir reintento
+            this.loginCardSentUsers.delete(userId);
             
             // Fallback completo
             await context.sendActivity(
@@ -402,6 +440,20 @@ class TeamsBot extends DialogBot {
                 'Escribe: `login usuario:contraseña`\n\n' +
                 'Ejemplo: `login 91004:mipassword`'
             );
+        }
+    }
+
+    /**
+     * 🔍 OBTENER INFO DEL CALLER (para debug)
+     */
+    getCallerInfo() {
+        try {
+            const stack = new Error().stack;
+            const callerLine = stack.split('\n')[3]; // Línea del caller
+            const match = callerLine.match(/at (\w+)/);
+            return match ? match[1] : 'unknown';
+        } catch {
+            return 'unknown';
         }
     }
 
@@ -434,6 +486,9 @@ class TeamsBot extends DialogBot {
             const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
 
             if (loginResponse.success) {
+                // ✅ LIMPIAR: Usuario logueado exitosamente
+                this.loginCardSentUsers.delete(userId);
+                
                 await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
                 
                 await context.sendActivity(
@@ -488,7 +543,7 @@ class TeamsBot extends DialogBot {
                     '❌ **Campos incompletos**\n\n' +
                     'Por favor, completa usuario y contraseña.'
                 );
-                await this.showLoginCard(context);
+                await this.showLoginCard(context, 'handleLoginSubmit-incompletos');
                 return;
             }
 
@@ -507,6 +562,9 @@ class TeamsBot extends DialogBot {
 
             if (loginResponse.success) {
                 console.log(`✅ [${userId}] Login exitoso, estableciendo autenticación...`);
+                
+                // ✅ LIMPIAR: Usuario logueado exitosamente
+                this.loginCardSentUsers.delete(userId);
                 
                 const authResult = await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
                 console.log(`🔐 [${userId}] Autenticación establecida: ${authResult}`);
@@ -528,7 +586,7 @@ class TeamsBot extends DialogBot {
                     `${loginResponse.message}\n\n` +
                     `🔄 Intenta nuevamente.`
                 );
-                await this.showLoginCard(context);
+                await this.showLoginCard(context, 'handleLoginSubmit-fallido');
             }
 
             console.log(`🏁 [${userId}] ===== FIN SUBMIT DE TARJETA =====\n`);
@@ -660,16 +718,21 @@ class TeamsBot extends DialogBot {
 
     async handleLogout(context, userId) {
         try {
+            console.log(`🚪 [${userId}] Iniciando logout...`);
+            
             this.authenticatedUsers.delete(userId);
             const authData = await this.authState.get(context, {});
             delete authData[userId];
             await this.authState.set(context, authData);
             await this.userState.saveChanges(context);
             
+            // ✅ LIMPIAR: Protección anti-duplicados para permitir nueva tarjeta
+            this.loginCardSentUsers.delete(userId);
+            
             await context.sendActivity('✅ **Sesión cerrada**\n\nHasta luego!');
             
             // Mostrar login directamente
-            await this.showLoginCard(context);
+            await this.showLoginCard(context, 'handleLogout');
             
         } catch (error) {
             console.error(`Error en logout:`, error);

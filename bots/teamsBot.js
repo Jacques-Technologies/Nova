@@ -1,9 +1,10 @@
-// teamsBot.js - VERSIÓN MEJORADA con mejor manejo de autenticación
+// teamsBot.js - VERSIÓN CON COSMOS DB y lógica "sin token = sin conversación"
 
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
 const axios = require('axios');
 const openaiService = require('../services/openaiService');
+const cosmosService = require('../services/cosmosService');
 
 class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
@@ -13,13 +14,14 @@ class TeamsBot extends DialogBot {
         this.authenticatedUsers = new Map();
         this.authState = this.userState.createProperty('AuthState');
         this.loginCardSentUsers = new Set();
-        this.welcomeMessageSent = new Set(); // ✅ NUEVO: Evitar mensajes de bienvenida duplicados
+        this.welcomeMessageSent = new Set();
         
         this.onMembersAdded(this.handleMembersAdded.bind(this));
         this.onMessage(this.handleMessageWithAuth.bind(this));
         this.openaiService = openaiService;
         
-        console.log('✅ TeamsBot inicializado - Versión mejorada');
+        console.log('✅ TeamsBot inicializado con Cosmos DB');
+        console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB activa' : 'Solo memoria'}`);
     }
 
     async handleMembersAdded(context, next) {
@@ -27,13 +29,17 @@ class TeamsBot extends DialogBot {
             if (member.id !== context.activity.recipient.id) {
                 const userId = context.activity.from.id;
                 
-                // ✅ MEJORA: Verificar si ya está autenticado antes de mostrar login
+                console.log(`👋 [${userId}] Nuevo miembro agregado`);
+                
+                // ✅ REGLA: Verificar autenticación antes de cualquier conversación
                 const isAuthenticated = await this.isUserAuthenticated(userId, context);
                 
                 if (isAuthenticated) {
                     await this.sendWelcomeBackMessage(context, userId);
+                    // ✅ NUEVO: Inicializar conversación en Cosmos DB para usuario autenticado
+                    await this.initializeConversation(context, userId);
                 } else {
-                    await this.sendInitialWelcome(context, userId);
+                    await this.sendAuthRequiredMessage(context, userId);
                 }
             }
         }
@@ -41,7 +47,39 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ NUEVO: Mensaje de bienvenida para usuarios ya autenticados
+     * ✅ NUEVO: Mensaje claro indicando que se requiere autenticación
+     */
+    async sendAuthRequiredMessage(context, userId) {
+        if (this.welcomeMessageSent.has(userId)) return;
+        
+        try {
+            await context.sendActivity(
+                `🔒 **Autenticación Requerida**\n\n` +
+                `Para usar Nova Bot y acceder a las funciones de inteligencia artificial, ` +
+                `primero debes autenticarte con tus credenciales corporativas.\n\n` +
+                `${cosmosService.isAvailable() ? 
+                    '💾 **Una vez autenticado**: Tus conversaciones se guardarán de forma persistente.' : 
+                    '⚠️ **Nota**: Las conversaciones solo se mantendrán en memoria temporal.'}\n\n` +
+                `🔐 **Ingresa tus credenciales para comenzar...**`
+            );
+            
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            await this.showLoginCard(context, 'authRequired');
+            
+            this.welcomeMessageSent.add(userId);
+            setTimeout(() => this.welcomeMessageSent.delete(userId), 120000);
+            
+        } catch (error) {
+            console.error('Error enviando mensaje de autenticación requerida:', error);
+            await context.sendActivity(
+                '🔒 **Autenticación requerida**\n\n' +
+                'Para usar el bot, escribe: `login usuario:contraseña`'
+            );
+        }
+    }
+
+    /**
+     * ✅ MEJORADO: Mensaje de bienvenida para usuarios autenticados
      */
     async sendWelcomeBackMessage(context, userId) {
         if (this.welcomeMessageSent.has(userId)) return;
@@ -51,51 +89,57 @@ class TeamsBot extends DialogBot {
             
             await context.sendActivity(
                 `👋 **¡Hola de nuevo, ${userInfo.nombre}!**\n\n` +
-                `✅ Ya estás autenticado como: **${userInfo.usuario}**\n\n` +
-                `💬 Puedes comenzar a chatear conmigo. ¿En qué puedo ayudarte hoy?`
+                `✅ Ya estás autenticado como: **${userInfo.usuario}**\n` +
+                `${cosmosService.isAvailable() ? 
+                    '💾 **Persistencia activa**: Tus conversaciones se guardan en Cosmos DB' : 
+                    '⚠️ **Solo memoria**: Las conversaciones no se guardan permanentemente'}\n\n` +
+                `🤖 **Funciones disponibles**:\n` +
+                `• Chat inteligente con IA\n` +
+                `• Consulta de tasas de interés Nova\n` +
+                `• Información de tu perfil\n` +
+                `• Historial de conversaciones\n\n` +
+                `💬 ¿En qué puedo ayudarte hoy?`
             );
             
             this.welcomeMessageSent.add(userId);
-            
-            // Limpiar después de 1 minuto
             setTimeout(() => this.welcomeMessageSent.delete(userId), 60000);
             
         } catch (error) {
             console.error('Error enviando mensaje de bienvenida:', error);
-            await this.sendInitialWelcome(context, userId);
+            await this.sendAuthRequiredMessage(context, userId);
         }
     }
 
     /**
-     * ✅ MEJORADO: Mensaje de bienvenida inicial con fallback robusto
+     * ✅ NUEVO: Inicializar conversación en Cosmos DB
      */
-    async sendInitialWelcome(context, userId) {
-        if (this.welcomeMessageSent.has(userId)) return;
-        
+    async initializeConversation(context, userId) {
         try {
-            await context.sendActivity(
-                `🤖 **¡Bienvenido a Nova Bot!**\n\n` +
-                `Soy tu asistente corporativo con inteligencia artificial.\n\n` +
-                `🔐 **Para comenzar, necesitas autenticarte...**`
+            if (!cosmosService.isAvailable()) {
+                console.log(`ℹ️ [${userId}] Cosmos DB no disponible - conversación solo en memoria`);
+                return;
+            }
+
+            const conversationId = context.activity.conversation.id;
+            const userInfo = await this.getUserInfo(userId);
+            
+            console.log(`💾 [${userId}] Inicializando conversación en Cosmos DB: ${conversationId}`);
+            
+            await cosmosService.saveConversationInfo(
+                conversationId,
+                userId,
+                userInfo?.nombre || 'Usuario',
+                {
+                    userInfo: userInfo,
+                    channelId: context.activity.channelId,
+                    serviceUrl: context.activity.serviceUrl
+                }
             );
             
-            // Pequeña pausa para que el mensaje llegue primero
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            await this.showLoginCard(context, 'initialWelcome');
-            
-            this.welcomeMessageSent.add(userId);
-            
-            // Limpiar después de 2 minutos
-            setTimeout(() => this.welcomeMessageSent.delete(userId), 120000);
+            console.log(`✅ [${userId}] Conversación inicializada en Cosmos DB`);
             
         } catch (error) {
-            console.error('Error enviando bienvenida inicial:', error);
-            await context.sendActivity(
-                '🤖 **¡Bienvenido a Nova Bot!**\n\n' +
-                'Para iniciar sesión, escribe: `login usuario:contraseña`\n\n' +
-                'Ejemplo: `login 91004:mipassword`'
-            );
+            console.error(`❌ Error inicializando conversación en Cosmos DB:`, error);
         }
     }
 
@@ -103,10 +147,10 @@ class TeamsBot extends DialogBot {
         const userId = context.activity.from.id;
         const text = (context.activity.text || '').trim();
 
-        console.log(`[${userId}] Mensaje: "${text}"`);
+        console.log(`[${userId}] Mensaje recibido: "${text}"`);
 
         try {
-            // 🧪 COMANDOS DE DIAGNÓSTICO (mantener)
+            // 🧪 COMANDOS DE DIAGNÓSTICO (mantener para desarrollo)
             if (text.toLowerCase() === 'test-card' || text.toLowerCase() === 'test') {
                 await this.runCardTests(context);
                 return await next();
@@ -147,26 +191,41 @@ class TeamsBot extends DialogBot {
                 return await next();
             }
 
-            // ✅ VERIFICAR AUTENTICACIÓN - MEJORADO
+            // ✅ REGLA PRINCIPAL: Sin token = Sin conversación
             const isAuthenticated = await this.isUserAuthenticated(userId, context);
             
             if (!isAuthenticated) {
-                console.log(`🔒 [${userId}] Usuario no autenticado`);
+                console.log(`🔒 [${userId}] ACCESO DENEGADO - Usuario no autenticado`);
                 
-                // ✅ MEJORA: Mensaje más claro cuando no está autenticado
                 await context.sendActivity(
-                    `🔒 **Necesitas autenticarte primero**\n\n` +
-                    `Para usar el bot, debes iniciar sesión con tus credenciales corporativas.\n\n` +
-                    `**Opciones:**\n` +
-                    `• Usar la tarjeta de login (recomendado)\n` +
-                    `• Escribir: \`login usuario:contraseña\``
+                    `🔒 **Acceso Denegado**\n\n` +
+                    `❌ **Sin autenticación, no hay conversación**\n\n` +
+                    `Para acceder a las funciones del bot, incluida la conversación con IA, ` +
+                    `**debes autenticarte primero** con tus credenciales corporativas.\n\n` +
+                    `${cosmosService.isAvailable() ? 
+                        '💾 **Beneficio**: Una vez autenticado, tus conversaciones se guardarán permanentemente.' : 
+                        '⚠️ **Nota**: Las conversaciones se mantendrán solo durante la sesión.'}\n\n` +
+                    `🔐 **¿Listo para autenticarte?**`
                 );
                 
-                await this.showLoginCard(context, 'authRequired');
+                await this.showLoginCard(context, 'accessDenied');
                 return await next();
             }
 
-            // ✅ MEJORADO: Comandos informativos para usuarios autenticados
+            // ✅ USUARIO AUTENTICADO: Procesar mensaje con conversación completa
+            console.log(`✅ [${userId}] Usuario autenticado - procesando mensaje`);
+
+            // ✅ NUEVO: Asegurar que la conversación esté inicializada en Cosmos DB
+            const conversationId = context.activity.conversation.id;
+            if (cosmosService.isAvailable()) {
+                const conversationExists = await cosmosService.getConversationInfo(conversationId, userId);
+                if (!conversationExists) {
+                    console.log(`📝 [${userId}] Inicializando conversación perdida en Cosmos DB`);
+                    await this.initializeConversation(context, userId);
+                }
+            }
+
+            // ✅ COMANDOS PARA USUARIOS AUTENTICADOS
             if (text.toLowerCase() === 'mi info' || text.toLowerCase() === 'info' || text.toLowerCase() === 'perfil') {
                 await this.showUserInfo(context, userId);
                 return await next();
@@ -177,8 +236,13 @@ class TeamsBot extends DialogBot {
                 return await next();
             }
 
-            // 💬 PROCESAR MENSAJE AUTENTICADO
-            await this.processAuthenticatedMessage(context, text, userId);
+            if (text.toLowerCase().includes('historial') || text.toLowerCase().includes('resumen')) {
+                await this.showConversationSummary(context, userId, conversationId);
+                return await next();
+            }
+
+            // 💬 PROCESAR MENSAJE CON IA (solo para usuarios autenticados)
+            await this.processAuthenticatedMessage(context, text, userId, conversationId);
 
         } catch (error) {
             console.error(`[${userId}] Error:`, error);
@@ -193,7 +257,43 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ NUEVO: Mostrar información del usuario autenticado
+     * ✅ NUEVO: Mostrar resumen de conversación
+     */
+    async showConversationSummary(context, userId, conversationId) {
+        try {
+            const userInfo = await this.getUserInfo(userId);
+            
+            if (!cosmosService.isAvailable()) {
+                await context.sendActivity(
+                    `📋 **Resumen de Conversación**\n\n` +
+                    `👤 **Usuario**: ${userInfo.nombre} (${userInfo.usuario})\n` +
+                    `💾 **Estado**: Solo memoria temporal - No hay historial persistente\n\n` +
+                    `⚠️ Para tener historial persistente, configura Cosmos DB en el sistema.`
+                );
+                return;
+            }
+
+            console.log(`📊 [${userId}] Generando resumen de conversación...`);
+            
+            // Usar OpenAI para generar resumen inteligente
+            const response = await this.openaiService.procesarMensaje(
+                'Genera un resumen de mi conversación actual',
+                [],
+                userInfo.token,
+                userInfo,
+                conversationId
+            );
+
+            await this.sendResponse(context, response);
+            
+        } catch (error) {
+            console.error(`Error mostrando resumen:`, error);
+            await context.sendActivity('❌ Error generando resumen de conversación.');
+        }
+    }
+
+    /**
+     * ✅ MEJORADO: Mostrar información del usuario con estadísticas de Cosmos DB
      */
     async showUserInfo(context, userId) {
         try {
@@ -204,18 +304,36 @@ class TeamsBot extends DialogBot {
                 return;
             }
 
-            const infoCard = this.createUserInfoCard(userInfo);
-            
-            await context.sendActivity(
-                `👤 **Tu Información Corporativa**\n\n` +
-                `📝 **Nombre**: ${userInfo.nombre}\n` +
-                `👤 **Usuario**: ${userInfo.usuario}\n` +
-                `🏢 **Apellido Paterno**: ${userInfo.paterno || 'N/A'}\n` +
-                `🏢 **Apellido Materno**: ${userInfo.materno || 'N/A'}\n` +
-                `🔑 **Token**: ${userInfo.token.substring(0, 30)}...\n` +
-                `📅 **Última autenticación**: Hace unos momentos\n\n` +
-                `💬 **¿Necesitas algo más?** Solo pregúntame.`
-            );
+            let infoMessage = `👤 **Tu Información Corporativa**\n\n` +
+                             `📝 **Nombre**: ${userInfo.nombre}\n` +
+                             `👤 **Usuario**: ${userInfo.usuario}\n` +
+                             `🏢 **Apellido Paterno**: ${userInfo.paterno || 'N/A'}\n` +
+                             `🏢 **Apellido Materno**: ${userInfo.materno || 'N/A'}\n` +
+                             `🔑 **Token**: ${userInfo.token.substring(0, 30)}...\n` +
+                             `📅 **Última autenticación**: Hace unos momentos\n\n`;
+
+            // ✅ NUEVO: Información de Cosmos DB si está disponible
+            if (cosmosService.isAvailable()) {
+                try {
+                    const conversationId = context.activity.conversation.id;
+                    const conversationInfo = await cosmosService.getConversationInfo(conversationId, userId);
+                    const historial = await cosmosService.getConversationHistory(conversationId, userId, 100);
+                    
+                    infoMessage += `💾 **Persistencia**: ✅ Cosmos DB activa\n`;
+                    infoMessage += `📊 **Mensajes guardados**: ${historial.length}\n`;
+                    infoMessage += `📅 **Conversación iniciada**: ${conversationInfo?.createdAt ? new Date(conversationInfo.createdAt).toLocaleString('es-MX') : 'Desconocida'}\n`;
+                    infoMessage += `🕐 **Última actividad**: ${conversationInfo?.lastActivity ? new Date(conversationInfo.lastActivity).toLocaleString('es-MX') : 'Ahora'}\n\n`;
+                } catch (cosmosError) {
+                    console.warn('⚠️ Error obteniendo info de Cosmos DB:', cosmosError.message);
+                    infoMessage += `💾 **Persistencia**: ⚠️ Cosmos DB con problemas\n\n`;
+                }
+            } else {
+                infoMessage += `💾 **Persistencia**: ⚠️ Solo memoria temporal\n\n`;
+            }
+
+            infoMessage += `💬 **¿Necesitas algo más?** Solo pregúntame.`;
+
+            await context.sendActivity(infoMessage);
 
         } catch (error) {
             console.error(`Error mostrando info del usuario:`, error);
@@ -224,7 +342,7 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ NUEVO: Mostrar ayuda contextual
+     * ✅ MEJORADO: Ayuda con información específica de Cosmos DB
      */
     async showHelp(context, userId) {
         try {
@@ -235,25 +353,33 @@ class TeamsBot extends DialogBot {
                 `👋 Hola **${userInfo.nombre}**, aquí tienes todo lo que puedo hacer:\n\n` +
                 
                 `🤖 **Chat Inteligente:**\n` +
-                `• Escribe cualquier pregunta o mensaje\n` +
-                `• Uso inteligencia artificial GPT-4 para ayudarte\n` +
-                `• Puedo ayudarte con tareas, análisis, consultas, etc.\n\n` +
+                `• Conversación natural con IA GPT-4\n` +
+                `• Respuestas contextuales y memoria de conversación\n` +
+                `• ${cosmosService.isAvailable() ? 'Historial persistente en Cosmos DB' : 'Historial temporal en memoria'}\n\n` +
                 
-                `👤 **Comandos Útiles:**\n` +
-                `• \`mi info\` - Ver tu información corporativa\n` +
+                `💰 **Consultas Financieras:**\n` +
+                `• \`tasas 2025\` - Ver tasas de interés por año\n` +
+                `• \`consultar tasas\` - Información de productos financieros\n` +
+                `• Análisis financiero personalizado\n\n` +
+                
+                `👤 **Comandos de Usuario:**\n` +
+                `• \`mi info\` - Ver tu información completa\n` +
+                `• \`historial\` - Resumen de tu conversación\n` +
                 `• \`logout\` - Cerrar sesión\n` +
                 `• \`ayuda\` - Mostrar esta ayuda\n\n` +
                 
-                `🔒 **Seguridad:**\n` +
-                `• Tu sesión es temporal y segura\n` +
-                `• Tu token se mantiene privado\n` +
-                `• Puedes cerrar sesión en cualquier momento\n\n` +
+                `🔒 **Seguridad y Persistencia:**\n` +
+                `• Tu sesión es segura con token corporativo\n` +
+                `• ${cosmosService.isAvailable() ? 
+                    'Conversaciones guardadas permanentemente en Cosmos DB' : 
+                    'Conversaciones temporales (se pierden al reiniciar)'}\n` +
+                `• Acceso controlado por autenticación\n\n` +
                 
                 `💡 **Ejemplos de uso:**\n` +
-                `• "¿Qué puedes hacer?"\n` +
-                `• "Ayúdame a escribir un email"\n` +
-                `• "Explícame sobre IA"\n` +
-                `• "¿Cuál es la fecha de hoy?"`
+                `• "Muestra las tasas de 2025"\n` +
+                `• "¿Cuál es la mejor opción de inversión?"\n` +
+                `• "Analiza mi historial de conversación"\n` +
+                `• "Explícame sobre depósitos a plazo fijo"`
             );
 
         } catch (error) {
@@ -263,52 +389,34 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ MEJORADO: Tarjeta de información de usuario
-     */
-    createUserInfoCard(userInfo) {
-        const card = {
-            type: 'AdaptiveCard',
-            version: '1.0',
-            body: [
-                {
-                    type: 'TextBlock',
-                    text: '👤 Tu Información',
-                    size: 'Large',
-                    weight: 'Bolder'
-                },
-                {
-                    type: 'FactSet',
-                    facts: [
-                        { title: 'Nombre:', value: userInfo.nombre },
-                        { title: 'Usuario:', value: userInfo.usuario },
-                        { title: 'Paterno:', value: userInfo.paterno || 'N/A' },
-                        { title: 'Materno:', value: userInfo.materno || 'N/A' }
-                    ]
-                }
-            ],
-            actions: [
-                {
-                    type: 'Action.Submit',
-                    title: '❓ Ayuda',
-                    data: { action: 'help' }
-                }
-            ]
-        };
-
-        return CardFactory.adaptiveCard(card);
-    }
-
-    /**
-     * ✅ MEJORADO: Manejo de logout con confirmación
+     * ✅ MEJORADO: Logout con limpieza de Cosmos DB
      */
     async handleLogout(context, userId) {
         try {
-            console.log(`🚪 [${userId}] Iniciando logout...`);
+            console.log(`🚪 [${userId}] Iniciando logout con limpieza completa...`);
             
             const userInfo = await this.getUserInfo(userId);
             const userName = userInfo ? userInfo.nombre : 'Usuario';
             
-            // Limpiar datos
+            // ✅ NUEVO: Limpiar datos de Cosmos DB si está disponible
+            if (cosmosService.isAvailable()) {
+                try {
+                    const conversationId = context.activity.conversation.id;
+                    console.log(`🗑️ [${userId}] Limpiando datos de Cosmos DB...`);
+                    
+                    // Opción 1: Eliminar conversación completa (descomenta si quieres eliminar todo)
+                    // await cosmosService.deleteConversation(conversationId, userId);
+                    
+                    // Opción 2: Solo limpiar mensajes antiguos manteniendo info básica
+                    await cosmosService.cleanOldMessages(conversationId, userId, 0); // 0 = eliminar todo
+                    
+                    console.log(`✅ [${userId}] Datos de Cosmos DB limpiados`);
+                } catch (cosmosError) {
+                    console.warn(`⚠️ [${userId}] Error limpiando Cosmos DB:`, cosmosError.message);
+                }
+            }
+            
+            // Limpiar datos en memoria
             this.authenticatedUsers.delete(userId);
             const authData = await this.authState.get(context, {});
             delete authData[userId];
@@ -321,11 +429,13 @@ class TeamsBot extends DialogBot {
             
             await context.sendActivity(
                 `👋 **¡Hasta luego, ${userName}!**\n\n` +
-                `✅ Tu sesión ha sido cerrada correctamente.\n\n` +
+                `✅ Tu sesión ha sido cerrada correctamente.\n` +
+                `${cosmosService.isAvailable() ? 
+                    '🗑️ Datos de conversación limpiados de Cosmos DB\n' : 
+                    '💾 Datos temporales eliminados\n'}\n` +
                 `🔒 Para volver a usar el bot, necesitarás autenticarte nuevamente.`
             );
             
-            // Pequeña pausa antes de mostrar login
             await new Promise(resolve => setTimeout(resolve, 2000));
             
             await context.sendActivity('🔐 **¿Quieres iniciar sesión nuevamente?**');
@@ -338,22 +448,24 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ MEJORADO: Procesamiento de mensajes autenticados con mejor contexto
+     * ✅ MEJORADO: Procesamiento con Cosmos DB
      */
-    async processAuthenticatedMessage(context, text, userId) {
+    async processAuthenticatedMessage(context, text, userId, conversationId) {
         try {
             const userInfo = this.authenticatedUsers.get(userId);
             
             // Mostrar indicador de escritura
             await context.sendActivity({ type: 'typing' });
 
-            console.log(`💬 [${userInfo.usuario}] Procesando mensaje: "${text}"`);
+            console.log(`💬 [${userInfo.usuario}] Procesando mensaje autenticado: "${text}"`);
 
+            // ✅ NUEVO: Usar Cosmos DB para historial si está disponible
             const response = await this.openaiService.procesarMensaje(
                 text, 
-                [], // Historial - podrías implementar esto si quieres mantener contexto
+                [], // El historial lo maneja OpenAI Service internamente desde Cosmos DB
                 userInfo.token, 
-                userInfo
+                userInfo,
+                conversationId // ✅ Pasar conversationId para persistencia
             );
 
             await this.sendResponse(context, response);
@@ -374,11 +486,10 @@ class TeamsBot extends DialogBot {
     }
 
     // ===== MANTENER MÉTODOS EXISTENTES =====
-    // (authenticateWithNova, handleLoginSubmit, showLoginCard, etc.)
-    // ... [resto de métodos sin cambios]
+    // (showLoginCard, handleLoginSubmit, authenticateWithNova, etc.)
 
     /**
-     * ✅ MEJORADO: Debug más completo
+     * ✅ MEJORADO: Estadísticas con información de Cosmos DB
      */
     getStats() {
         return {
@@ -386,156 +497,72 @@ class TeamsBot extends DialogBot {
             loginCardsPending: this.loginCardSentUsers.size,
             welcomeMessagesSent: this.welcomeMessageSent.size,
             openaiAvailable: this.openaiService?.openaiAvailable || false,
+            cosmosDBAvailable: cosmosService.isAvailable(),
+            persistenceType: cosmosService.isAvailable() ? 'CosmosDB' : 'Memory',
             timestamp: new Date().toISOString()
         };
     }
 
-    // ===== MANTENER MÉTODOS EXISTENTES - IMPLEMENTACIÓN COMPLETA =====
-
     /**
-     * 🧪 DEBUG DE LA API NOVA
+     * ✅ NUEVO: Cleanup para desarrollo
      */
-    async debugNovaAPI(context, text) {
-        try {
-            // Extraer credenciales del formato: debug-api usuario:contraseña
-            const debugPart = text.substring(10).trim(); // Remover "debug-api "
-            const [username, password] = debugPart.split(':');
+    cleanup() {
+        console.log('🧹 Limpiando TeamsBot...');
+        this.authenticatedUsers.clear();
+        this.loginCardSentUsers.clear();
+        this.welcomeMessageSent.clear();
+        console.log('✅ TeamsBot limpiado');
+    }
 
-            if (!username || !password) {
-                await context.sendActivity(
-                    '🧪 **Debug API Nova**\n\n' +
-                    '✅ **Formato**: `debug-api usuario:contraseña`\n' +
-                    '📝 **Ejemplo**: `debug-api 111111:password`\n\n' +
-                    'Esto probará la API sin procesar el login.'
-                );
+    // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
+    // (Los métodos existentes como showLoginCard, handleLoginSubmit, etc. se mantienen igual)
+
+    async showLoginCard(context, caller = 'unknown') {
+        const userId = context.activity.from.id;
+        
+        try {
+            console.log(`\n🔐 [${userId}] ===== INICIO showLoginCard =====`);
+            console.log(`📞 [${userId}] Llamado desde: ${caller}`);
+            console.log(`🔍 [${userId}] Usuario ya tiene tarjeta pendiente: ${this.loginCardSentUsers.has(userId)}`);
+
+            if (this.loginCardSentUsers.has(userId)) {
+                console.log(`⚠️ [${userId}] Tarjeta ya enviada recientemente, saltando...`);
                 return;
             }
 
-            await context.sendActivity('🧪 **Probando API Nova directamente...**');
-            await context.sendActivity({ type: 'typing' });
+            console.log('🔐 Intentando mostrar tarjeta de login...');
 
-            console.log(`\n🧪 ===== DEBUG API NOVA =====`);
-            console.log(`Usuario: ${username}`);
-            console.log(`Password: ${'*'.repeat(password.length)}`);
-
-            const result = await this.authenticateWithNova(username.trim(), password.trim());
-
-            console.log(`Resultado:`, result);
-            console.log(`===== FIN DEBUG API =====\n`);
-
-            if (result.success) {
-                await context.sendActivity(
-                    `✅ **API Nova - ÉXITO**\n\n` +
-                    `👤 **Usuario**: ${result.userInfo.usuario}\n` +
-                    `👋 **Nombre**: ${result.userInfo.nombre}\n` +
-                    `🔑 **Token**: ${result.userInfo.token.substring(0, 30)}...\n` +
-                    `💬 **Mensaje**: ${result.userInfo.mensaje}\n\n` +
-                    `🎯 **La API funciona correctamente. El problema podría estar en:**\n` +
-                    `• El submit de la tarjeta\n` +
-                    `• El procesamiento de datos\n` +
-                    `• La interfaz de Teams`
-                );
-            } else {
-                await context.sendActivity(
-                    `❌ **API Nova - ERROR**\n\n` +
-                    `📝 **Mensaje**: ${result.message}\n\n` +
-                    `🔍 **Verifica**:\n` +
-                    `• Credenciales correctas\n` +
-                    `• Conexión a internet\n` +
-                    `• Servidor Nova disponible`
-                );
-            }
-
-        } catch (error) {
-            console.error('Error en debug API:', error);
-            await context.sendActivity(`❌ **Error en debug**: ${error.message}`);
-        }
-    }
-
-    async runCardTests(context) {
-        try {
-            console.log('🧪 Ejecutando pruebas de tarjetas...');
-
-            // Test 1: Tarjeta ultra-simple
-            await context.sendActivity('🧪 **Test 1**: Tarjeta ultra-simple');
-            const simpleCard = this.createSimpleTestCard();
-            await context.sendActivity({ attachments: [simpleCard] });
-
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // Test 2: Tarjeta con input básico
-            await context.sendActivity('🧪 **Test 2**: Tarjeta con input');
-            const inputCard = this.createInputTestCard();
-            await context.sendActivity({ attachments: [inputCard] });
-
-            await new Promise(resolve => setTimeout(resolve, 1000));
-
-            // Test 3: Tarjeta de login mínima
-            await context.sendActivity('🧪 **Test 3**: Tarjeta de login mínima');
             const loginCard = this.createMinimalLoginCard();
-            await context.sendActivity({ attachments: [loginCard] });
+            
+            console.log('🔐 Enviando tarjeta...');
+            
+            await context.sendActivity({ 
+                attachments: [loginCard]
+            });
 
-            await context.sendActivity(
-                '📊 **Diagnóstico completado**\n\n' +
-                '✅ Si ves las 3 tarjetas arriba: Las Adaptive Cards funcionan\n' +
-                '❌ Si no ves ninguna tarjeta: Problema con Adaptive Cards en tu Teams\n' +
-                '⚠️ Si ves algunas pero no todas: Problema de compatibilidad específico\n\n' +
-                '**Comandos disponibles:**\n' +
-                '• `card-login` - Probar login con tarjeta\n' +
-                '• `login usuario:contraseña` - Login alternativo\n' +
-                '• `test` - Repetir estas pruebas'
-            );
+            this.loginCardSentUsers.add(userId);
+            
+            setTimeout(() => {
+                this.loginCardSentUsers.delete(userId);
+                console.log(`🧹 [${userId}] Protección anti-duplicados limpiada`);
+            }, 30000);
+
+            console.log(`✅ [${userId}] Tarjeta enviada exitosamente`);
+            console.log(`🏁 [${userId}] ===== FIN showLoginCard =====\n`);
 
         } catch (error) {
-            console.error('❌ Error en pruebas:', error);
-            await context.sendActivity(`❌ Error ejecutando pruebas: ${error.message}`);
+            console.error(`❌ [${userId}] Error enviando tarjeta de login:`, error);
+            
+            this.loginCardSentUsers.delete(userId);
+            
+            await context.sendActivity(
+                '🔐 **Bienvenido a Nova Bot**\n\n' +
+                '❌ **Error con la tarjeta**\n\n' +
+                '🔄 **Usa el método alternativo:**\n' +
+                'Escribe: `login usuario:contraseña`\n\n' +
+                'Ejemplo: `login 91004:mipassword`'
+            );
         }
-    }
-
-    createSimpleTestCard() {
-        const card = {
-            type: 'AdaptiveCard',
-            version: '1.0',
-            body: [
-                {
-                    type: 'TextBlock',
-                    text: '✅ Tarjeta Simple Funciona',
-                    weight: 'Bolder'
-                }
-            ]
-        };
-
-        console.log('🃏 Tarjeta simple creada');
-        return CardFactory.adaptiveCard(card);
-    }
-
-    createInputTestCard() {
-        const card = {
-            type: 'AdaptiveCard',
-            version: '1.0',
-            body: [
-                {
-                    type: 'TextBlock',
-                    text: 'Prueba de Input',
-                    weight: 'Bolder'
-                },
-                {
-                    type: 'Input.Text',
-                    id: 'testInput',
-                    placeholder: 'Escribe algo'
-                }
-            ],
-            actions: [
-                {
-                    type: 'Action.Submit',
-                    title: 'Probar',
-                    data: { action: 'test' }
-                }
-            ]
-        };
-
-        console.log('🃏 Tarjeta con input creada');
-        return CardFactory.adaptiveCard(card);
     }
 
     createMinimalLoginCard() {
@@ -584,68 +611,13 @@ class TeamsBot extends DialogBot {
         return CardFactory.adaptiveCard(card);
     }
 
-    async showLoginCard(context, caller = 'unknown') {
-        const userId = context.activity.from.id;
-        
-        try {
-            console.log(`\n🔐 [${userId}] ===== INICIO showLoginCard =====`);
-            console.log(`📞 [${userId}] Llamado desde: ${caller}`);
-            console.log(`🔍 [${userId}] Usuario ya tiene tarjeta pendiente: ${this.loginCardSentUsers.has(userId)}`);
-
-            // ✅ PROTECCIÓN: No enviar tarjeta si ya se envió recientemente
-            if (this.loginCardSentUsers.has(userId)) {
-                console.log(`⚠️ [${userId}] Tarjeta ya enviada recientemente, saltando...`);
-                return;
-            }
-
-            console.log('🔐 Intentando mostrar tarjeta de login...');
-
-            // Tarjeta de login
-            const loginCard = this.createMinimalLoginCard();
-            
-            console.log('🔐 Enviando tarjeta...');
-            
-            await context.sendActivity({ 
-                attachments: [loginCard]
-            });
-
-            // ✅ MARCAR: Usuario tiene tarjeta pendiente
-            this.loginCardSentUsers.add(userId);
-            
-            // ✅ LIMPIAR: Después de 30 segundos permitir nueva tarjeta
-            setTimeout(() => {
-                this.loginCardSentUsers.delete(userId);
-                console.log(`🧹 [${userId}] Protección anti-duplicados limpiada`);
-            }, 30000);
-
-            console.log(`✅ [${userId}] Tarjeta enviada exitosamente`);
-            console.log(`🏁 [${userId}] ===== FIN showLoginCard =====\n`);
-
-        } catch (error) {
-            console.error(`❌ [${userId}] Error enviando tarjeta de login:`, error);
-            
-            // ✅ LIMPIAR: En caso de error, permitir reintento
-            this.loginCardSentUsers.delete(userId);
-            
-            // Fallback completo
-            await context.sendActivity(
-                '🔐 **Bienvenido a Nova Bot**\n\n' +
-                '❌ **Error con la tarjeta**\n\n' +
-                '🔄 **Usa el método alternativo:**\n' +
-                'Escribe: `login usuario:contraseña`\n\n' +
-                'Ejemplo: `login 91004:mipassword`'
-            );
-        }
-    }
-
     async handleTextLogin(context, text) {
         const userId = context.activity.from.id;
         
         try {
             console.log(`[${userId}] Login con texto: ${text}`);
 
-            // Extraer credenciales del formato: login usuario:contraseña
-            const loginPart = text.substring(6).trim(); // Remover "login "
+            const loginPart = text.substring(6).trim();
             const [username, password] = loginPart.split(':');
 
             if (!username || !password) {
@@ -659,21 +631,25 @@ class TeamsBot extends DialogBot {
 
             console.log(`[${userId}] Credenciales extraídas - Usuario: ${username}`);
 
-            // Procesar login
             await context.sendActivity({ type: 'typing' });
             const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
 
             if (loginResponse.success) {
-                // ✅ LIMPIAR: Usuario logueado exitosamente
                 this.loginCardSentUsers.delete(userId);
                 
                 await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
+                
+                // ✅ NUEVO: Inicializar conversación en Cosmos DB tras login exitoso
+                await this.initializeConversation(context, userId);
                 
                 await context.sendActivity(
                     `✅ **¡Login exitoso!**\n\n` +
                     `👋 Bienvenido, **${loginResponse.userInfo.nombre}**\n` +
                     `👤 Usuario: ${loginResponse.userInfo.usuario}\n` +
-                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n\n` +
+                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n` +
+                    `${cosmosService.isAvailable() ? 
+                        '💾 **Persistencia activada**: Conversaciones guardadas en Cosmos DB\n' : 
+                        '⚠️ **Solo memoria**: Conversaciones temporales\n'}\n` +
                     `💬 Ya puedes usar el bot normalmente.`
                 );
             } else {
@@ -706,7 +682,6 @@ class TeamsBot extends DialogBot {
                 action: action
             });
 
-            // Verificar que es el submit correcto
             if (action !== 'login') {
                 console.log(`⚠️ [${userId}] Submit ignorado - acción esperada: 'login', recibida: '${action}'`);
                 return;
@@ -738,17 +713,22 @@ class TeamsBot extends DialogBot {
             if (loginResponse.success) {
                 console.log(`✅ [${userId}] Login exitoso, estableciendo autenticación...`);
                 
-                // ✅ LIMPIAR: Usuario logueado exitosamente
                 this.loginCardSentUsers.delete(userId);
                 
                 const authResult = await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
                 console.log(`🔐 [${userId}] Autenticación establecida: ${authResult}`);
                 
+                // ✅ NUEVO: Inicializar conversación en Cosmos DB
+                await this.initializeConversation(context, userId);
+                
                 await context.sendActivity(
                     `✅ **¡Login exitoso desde tarjeta!**\n\n` +
                     `👋 Bienvenido, **${loginResponse.userInfo.nombre}**\n` +
                     `👤 Usuario: ${loginResponse.userInfo.usuario}\n` +
-                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n\n` +
+                    `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n` +
+                    `${cosmosService.isAvailable() ? 
+                        '💾 **Persistencia activada**: Conversaciones guardadas en Cosmos DB\n' : 
+                        '⚠️ **Solo memoria**: Conversaciones temporales\n'}\n` +
                     `💬 Ya puedes usar el bot normalmente.`
                 );
                 
@@ -792,9 +772,7 @@ class TeamsBot extends DialogBot {
             );
 
             console.log(`📡 Respuesta Nova (${response.status}):`, JSON.stringify(response.data, null, 2));
-            console.log(`🔍 Tipo de respuesta:`, typeof response.data);
 
-            // ✅ CORRECCIÓN: Parsear JSON si viene como string
             let parsedData = response.data;
             
             if (typeof response.data === 'string') {
@@ -822,7 +800,6 @@ class TeamsBot extends DialogBot {
                     CveUsuario: rawUserInfo.CveUsuario
                 });
                 
-                // ✅ CORRECCIÓN: Limpiar datos y verificar correctamente
                 if (rawUserInfo.EsValido === 0 && rawUserInfo.Token && rawUserInfo.Token.trim().length > 0) {
                     const cleanUserInfo = {
                         usuario: rawUserInfo.CveUsuario ? rawUserInfo.CveUsuario.toString().trim() : username,
@@ -882,8 +859,8 @@ class TeamsBot extends DialogBot {
         }
     }
 
-    // ===== MÉTODOS AUXILIARES =====
-
+    // ===== MÉTODOS AUXILIARES EXISTENTES =====
+    
     isLogoutCommand(text) {
         return ['logout', 'cerrar sesion', 'cerrar sesión', 'salir'].includes(text.toLowerCase());
     }
@@ -989,6 +966,144 @@ class TeamsBot extends DialogBot {
 
     async getUserInfo(userId) {
         return this.authenticatedUsers.get(userId) || null;
+    }
+
+    // ===== MÉTODOS DE DIAGNÓSTICO (mantener para desarrollo) =====
+    
+    async debugNovaAPI(context, text) {
+        try {
+            const debugPart = text.substring(10).trim();
+            const [username, password] = debugPart.split(':');
+
+            if (!username || !password) {
+                await context.sendActivity(
+                    '🧪 **Debug API Nova**\n\n' +
+                    '✅ **Formato**: `debug-api usuario:contraseña`\n' +
+                    '📝 **Ejemplo**: `debug-api 111111:password`\n\n' +
+                    'Esto probará la API sin procesar el login.'
+                );
+                return;
+            }
+
+            await context.sendActivity('🧪 **Probando API Nova directamente...**');
+            await context.sendActivity({ type: 'typing' });
+
+            console.log(`\n🧪 ===== DEBUG API NOVA =====`);
+            console.log(`Usuario: ${username}`);
+            console.log(`Password: ${'*'.repeat(password.length)}`);
+
+            const result = await this.authenticateWithNova(username.trim(), password.trim());
+
+            console.log(`Resultado:`, result);
+            console.log(`===== FIN DEBUG API =====\n`);
+
+            if (result.success) {
+                await context.sendActivity(
+                    `✅ **API Nova - ÉXITO**\n\n` +
+                    `👤 **Usuario**: ${result.userInfo.usuario}\n` +
+                    `👋 **Nombre**: ${result.userInfo.nombre}\n` +
+                    `🔑 **Token**: ${result.userInfo.token.substring(0, 30)}...\n` +
+                    `💬 **Mensaje**: ${result.userInfo.mensaje}\n\n` +
+                    `🎯 **La API funciona correctamente.**`
+                );
+            } else {
+                await context.sendActivity(
+                    `❌ **API Nova - ERROR**\n\n` +
+                    `📝 **Mensaje**: ${result.message}\n\n` +
+                    `🔍 **Verifica**:\n` +
+                    `• Credenciales correctas\n` +
+                    `• Conexión a internet\n` +
+                    `• Servidor Nova disponible`
+                );
+            }
+
+        } catch (error) {
+            console.error('Error en debug API:', error);
+            await context.sendActivity(`❌ **Error en debug**: ${error.message}`);
+        }
+    }
+
+    async runCardTests(context) {
+        try {
+            console.log('🧪 Ejecutando pruebas de tarjetas...');
+
+            await context.sendActivity('🧪 **Test 1**: Tarjeta ultra-simple');
+            const simpleCard = this.createSimpleTestCard();
+            await context.sendActivity({ attachments: [simpleCard] });
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            await context.sendActivity('🧪 **Test 2**: Tarjeta con input');
+            const inputCard = this.createInputTestCard();
+            await context.sendActivity({ attachments: [inputCard] });
+
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            await context.sendActivity('🧪 **Test 3**: Tarjeta de login mínima');
+            const loginCard = this.createMinimalLoginCard();
+            await context.sendActivity({ attachments: [loginCard] });
+
+            await context.sendActivity(
+                '📊 **Diagnóstico completado**\n\n' +
+                '✅ Si ves las 3 tarjetas arriba: Las Adaptive Cards funcionan\n' +
+                '❌ Si no ves ninguna tarjeta: Problema con Adaptive Cards en tu Teams\n' +
+                '⚠️ Si ves algunas pero no todas: Problema de compatibilidad específico\n\n' +
+                '**Comandos disponibles:**\n' +
+                '• `card-login` - Probar login con tarjeta\n' +
+                '• `login usuario:contraseña` - Login alternativo\n' +
+                '• `test` - Repetir estas pruebas'
+            );
+
+        } catch (error) {
+            console.error('❌ Error en pruebas:', error);
+            await context.sendActivity(`❌ Error ejecutando pruebas: ${error.message}`);
+        }
+    }
+
+    createSimpleTestCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: '✅ Tarjeta Simple Funciona',
+                    weight: 'Bolder'
+                }
+            ]
+        };
+
+        console.log('🃏 Tarjeta simple creada');
+        return CardFactory.adaptiveCard(card);
+    }
+
+    createInputTestCard() {
+        const card = {
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: 'Prueba de Input',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'testInput',
+                    placeholder: 'Escribe algo'
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: 'Probar',
+                    data: { action: 'test' }
+                }
+            ]
+        };
+
+        console.log('🃏 Tarjeta con input creada');
+        return CardFactory.adaptiveCard(card);
     }
 }
 

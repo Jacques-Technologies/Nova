@@ -1,5 +1,5 @@
 // services/openaiService.js
-// OpenAI Service mejorado con Cosmos DB y nuevas herramientas
+// OpenAI Service COMPLETO CORREGIDO con Cosmos DB y mejores formatos
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
 const axios = require('axios');
@@ -9,7 +9,7 @@ const documentService = require('./documentService');
 require('dotenv').config();
 
 /**
- * Servicio OpenAI mejorado con persistencia en Cosmos DB y herramienta de tasas
+ * Servicio OpenAI mejorado con persistencia en Cosmos DB y formato corregido
  */
 class OpenAIService {
     constructor() {
@@ -25,29 +25,112 @@ class OpenAIService {
     }
 
     /**
-     * ✅ NUEVO: Buscar documentos corporativos
+     * ✅ CORREGIDO: Búsqueda de documentos con mejor integración
      */
     async buscarDocumentos(consulta, userInfo) {
         try {
+            const userId = userInfo?.usuario || 'unknown';
+            console.log(`📖 [${userId}] Iniciando búsqueda de documentos: "${consulta}"`);
+
+            // ✅ VERIFICACIÓN MEJORADA: Estado del servicio
             if (!documentService.isAvailable()) {
-                return `⚠️ **Servicio de búsqueda de documentos no disponible**\n\n` +
-                       `El sistema de búsqueda de documentos corporativos no está configurado.\n\n` +
-                       `📋 **Funciones disponibles sin búsqueda:**\n` +
-                       `• Información personal (\`mi info\`)\n` +
-                       `• Consulta de tasas (\`tasas 2025\`)\n` +
-                       `• Chat general con inteligencia artificial`;
+                console.warn(`⚠️ [${userId}] DocumentService no disponible`);
+                
+                const configInfo = documentService.getConfigInfo();
+                console.log(`📊 Estado del servicio:`, {
+                    searchAvailable: configInfo.searchAvailable,
+                    error: configInfo.error,
+                    endpoint: configInfo.endpoint,
+                    indexName: configInfo.indexName
+                });
+
+                return `⚠️ **Servicio de búsqueda no disponible**\n\n` +
+                       `**Estado**: ${configInfo.error || 'No configurado'}\n\n` +
+                       `**Para habilitar búsqueda de documentos:**\n` +
+                       `• Configurar Azure Search en las variables de entorno\n` +
+                       `• Verificar conectividad con el servicio\n` +
+                       `• Contactar al administrador del sistema\n\n` +
+                       `**Funciones disponibles:**\n` +
+                       `• Consulta de tasas: \`tasas 2025\`\n` +
+                       `• Información personal: \`mi info\`\n` +
+                       `• Chat general con IA`;
             }
 
-            const userId = userInfo?.usuario || 'unknown';
-            console.log(`📖 [${userId}] Buscando documentos: "${consulta}"`);
-
-            const resultado = await documentService.buscarDocumentosGenerales(consulta, userId);
+            // ✅ BÚSQUEDA MEJORADA: Con logging detallado
+            console.log(`🔍 [${userId}] DocumentService disponible, ejecutando búsqueda...`);
             
+            // Llamar al método de búsqueda del DocumentService
+            const resultado = await documentService.buscarDocumentos(consulta, userId);
+            
+            console.log(`📊 [${userId}] Búsqueda completada, resultado obtenido`);
+            
+            // ✅ VALIDACIÓN: Verificar que obtuvimos resultado válido
+            if (!resultado || typeof resultado !== 'string') {
+                console.warn(`⚠️ [${userId}] Resultado inválido de DocumentService:`, typeof resultado);
+                return `❌ **Error en búsqueda**: No se obtuvo resultado válido del servicio de documentos`;
+            }
+
+            // ✅ DETECCIÓN: Si no se encontraron documentos específicos
+            if (resultado.includes('No se encontraron documentos') || 
+                resultado.includes('❌ No se encontraron')) {
+                
+                console.log(`💡 [${userId}] No se encontraron documentos, ofreciendo alternativas`);
+                
+                // Para el caso específico de "ajustes.docx"
+                if (consulta.toLowerCase().includes('ajustes.docx') || 
+                    consulta.toLowerCase().includes('ajustes')) {
+                    
+                    return `🔍 **Búsqueda: "${consulta}"**\n\n` +
+                           `❌ **Documento "ajustes.docx" no encontrado**\n\n` +
+                           `**Posibles causas:**\n` +
+                           `• El archivo no está indexado en Azure Search\n` +
+                           `• El documento no existe en el sistema\n` +
+                           `• El nombre del archivo es diferente\n\n` +
+                           `**Alternativas de búsqueda:**\n` +
+                           `• Busca por contenido: "configuración sistema"\n` +
+                           `• Busca por tema: "ajustes configuración"\n` +
+                           `• Busca documentos similares: "parámetros sistema"\n\n` +
+                           `**Otras opciones:**\n` +
+                           `• \`buscar políticas\` - Ver políticas corporativas\n` +
+                           `• \`obtener feriados\` - Consultar días feriados\n` +
+                           `• Describir qué información necesitas del documento`;
+                }
+            }
+
+            // ✅ ÉXITO: Retornar resultado de la búsqueda
+            console.log(`✅ [${userId}] Búsqueda exitosa, retornando resultado`);
             return resultado;
 
         } catch (error) {
-            console.error('❌ Error en búsqueda de documentos:', error);
-            return `❌ **Error buscando documentos**: ${error.message}`;
+            const userId = userInfo?.usuario || 'unknown';
+            console.error(`❌ [${userId}] Error en búsqueda de documentos:`, error);
+            
+            // ✅ DIAGNÓSTICO: Información detallada del error
+            let errorMessage = `❌ **Error buscando documentos**\n\n`;
+            errorMessage += `**Consulta**: "${consulta}"\n`;
+            errorMessage += `**Error**: ${error.message}\n\n`;
+            
+            // ✅ CLASIFICACIÓN: Tipo de error
+            if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
+                errorMessage += `**Tipo**: Error de conectividad con Azure Search\n`;
+                errorMessage += `**Solución**: Verificar configuración de red y endpoint\n`;
+            } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+                errorMessage += `**Tipo**: Error de permisos\n`;
+                errorMessage += `**Solución**: Verificar API Key de Azure Search\n`;
+            } else if (error.message.includes('404') || error.message.includes('Not Found')) {
+                errorMessage += `**Tipo**: Servicio o índice no encontrado\n`;
+                errorMessage += `**Solución**: Verificar endpoint e índice en Azure Search\n`;
+            } else {
+                errorMessage += `**Tipo**: Error interno del servicio\n`;
+                errorMessage += `**Solución**: Contactar soporte técnico\n`;
+            }
+            
+            errorMessage += `\n**Funciones disponibles:**\n`;
+            errorMessage += `• Consulta de tasas: \`tasas 2025\`\n`;
+            errorMessage += `• Información personal: \`mi info\`\n`;
+            errorMessage += `• Chat general con IA`;
+            
+            return errorMessage;
         }
     }
 
@@ -504,21 +587,39 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Decidir si usar herramientas con nuevas herramientas de documentos
+     * ✅ MEJORADO: Decidir si usar herramientas con detección mejorada
      */
     shouldUseTools(mensaje) {
         const mensajeLower = mensaje.toLowerCase();
         
         const toolKeywords = [
-            'fecha', 'hora', 'día', 'hoy', 
-            'mi información', 'mis datos', 'perfil',
+            // Fecha y hora
+            'fecha', 'hora', 'día', 'hoy', 'cuando', 'qué día',
+            
+            // Información personal
+            'mi información', 'mis datos', 'perfil', 'mi info', 'quien soy',
+            
+            // APIs y consultas
             'consultar', 'api', 'buscar',
-            'resumen', 'historial',
+            
+            // Historial
+            'resumen', 'historial', 'conversación',
+            
+            // Tasas de interés - PALABRAS CLAVE MEJORADAS
             'tasas', 'tasa', 'interes', 'interés', 'préstamo', 'crédito',
-            'vista', 'fijo', 'fap', 'nov',
-            // Nuevas palabras clave para documentos
-            'documento', 'documentos', 'política', 'políticas', 'politica', 'politicas',
-            'manual', 'procedimiento', 'procedimientos', 'normativa', 'normas',
+            'vista', 'fijo', 'fap', 'nov', 'depósito', 'depósitos',
+            'ahorro', 'ahorros', 'inversión', 'rendimiento',
+            
+            // Documentos - DETECCIÓN MEJORADA
+            'documento', 'documentos', 'archivo', 'archivos',
+            'política', 'políticas', 'politica', 'politicas',
+            'manual', 'manuales', 'procedimiento', 'procedimientos',
+            'normativa', 'normas', 'reglamento', 'guía', 'guias',
+            
+            // Nombres específicos de archivos
+            'ajustes.docx', 'ajustes', '.docx', '.pdf', '.doc',
+            
+            // Políticas específicas
             'vacaciones', 'feriados', 'festivos', 'dias libres',
             'horario', 'horarios', 'jornada', 'trabajo',
             'vestimenta', 'uniforme', 'dress code',
@@ -530,7 +631,14 @@ class OpenAIService {
             'nómina', 'salarios', 'pagos', 'descuentos'
         ];
         
-        return toolKeywords.some(keyword => mensajeLower.includes(keyword));
+        const usarHerramientas = toolKeywords.some(keyword => mensajeLower.includes(keyword));
+        
+        if (usarHerramientas) {
+            console.log(`🛠️ Herramientas habilitadas para: "${mensaje}"`);
+            console.log(`   Palabras clave detectadas: ${toolKeywords.filter(k => mensajeLower.includes(k)).join(', ')}`);
+        }
+        
+        return usarHerramientas;
     }
 
     /**
@@ -599,9 +707,13 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Herramientas con nuevas funciones de documentos
+     * ✅ CORREGIDO: Herramientas con mejor detección de documentos
      */
     async ejecutarHerramienta(nombre, parametros, userToken, userInfo, conversationId) {
+        const userId = userInfo?.usuario || 'unknown';
+        console.log(`🔧 [${userId}] Ejecutando herramienta: ${nombre}`);
+        console.log(`📋 [${userId}] Parámetros:`, parametros);
+
         switch (nombre) {
             case 'obtener_fecha_hora_actual':
                 return this.obtenerFechaHora(parametros.formato || 'completo');
@@ -610,18 +722,23 @@ class OpenAIService {
                 return this.obtenerInfoUsuario(userInfo, parametros.incluir_token);
 
             case 'consultar_tasas_interes':
+                console.log(`💰 [${userId}] Consultando tasas para año: ${parametros.anio}`);
                 return await this.consultarTasasInteres(parametros.anio, userToken, userInfo);
 
             case 'buscar_documentos':
+                console.log(`📖 [${userId}] Buscando documentos: "${parametros.consulta}"`);
                 return await this.buscarDocumentos(parametros.consulta, userInfo);
 
             case 'buscar_politicas':
+                console.log(`📋 [${userId}] Buscando política: ${parametros.tipo_politica}`);
                 return await this.buscarPoliticas(parametros.tipo_politica, userInfo);
 
             case 'obtener_dias_feriados':
+                console.log(`📅 [${userId}] Obteniendo feriados para: ${parametros.anio || 'año actual'}`);
                 return await this.obtenerDiasFeriados(parametros.anio, userInfo);
 
             case 'consultar_api_nova':
+                console.log(`🌐 [${userId}] Consultando API Nova: ${parametros.endpoint}`);
                 return await this.consultarApiNova(
                     parametros.endpoint, 
                     userToken, 
@@ -630,6 +747,7 @@ class OpenAIService {
                 );
 
             case 'generar_resumen_conversacion':
+                console.log(`📊 [${userId}] Generando resumen de conversación`);
                 return await this.generarResumenConversacion(conversationId, userInfo);
 
             default:
@@ -663,7 +781,8 @@ class OpenAIService {
             };
 
             console.log('📡 Request body para tasas:', JSON.stringify(requestBody, null, 2));
-            const url=process.env.NOVA_API_URL_TASA || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa';
+            const url = process.env.NOVA_API_URL_TASA || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa';
+            
             const response = await axios.post(
                 url,
                 requestBody,
@@ -739,7 +858,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ NUEVO: Formatear tabla de tasas para mostrar
+     * ✅ COMPLETAMENTE NUEVO: Formatear tabla de tasas con diseño mejorado para Teams
      */
     formatearTablaTasas(tasasData, anio, usuario) {
         try {
@@ -747,44 +866,142 @@ class OpenAIService {
                 return "❌ **Error**: Datos de tasas inválidos";
             }
 
-            let tabla = `📊 **Tasas de Interés Nova - ${anio}**\n`;
-            tabla += `👤 **Usuario**: ${usuario}\n\n`;
+            // Encabezado principal más atractivo
+            let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n`;
+            tabla += `═══════════════════════════════════════════════════════════════\n`;
+            tabla += `👤 **Usuario**: ${usuario}\n`;
+            tabla += `📅 **Año Consultado**: ${anio}\n`;
+            tabla += `🕐 **Última Actualización**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
 
-            // Crear encabezado de tabla
-            tabla += `| Mes | Vista | Fijo 1M | Fijo 3M | Fijo 6M | FAP | Nov | Préstamos |\n`;
-            tabla += `|-----|-------|---------|---------|---------|-----|-----|----------|\n`;
-
-            // Procesar cada mes
-            tasasData.forEach(mes => {
+            // Formato mejorado sin tabla markdown (que Teams no renderiza bien)
+            tasasData.forEach((mes, index) => {
                 if (mes.Mes) {
-                    const vista = mes.vista !== undefined ? `${mes.vista}%` : '-';
-                    const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : '-';
-                    const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : '-';
-                    const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : '-';
-                    const fap = mes.FAP !== undefined ? `${mes.FAP}%` : '-';
-                    const nov = mes.Nov !== undefined ? `${mes.Nov}%` : '-';
-                    const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : '-';
-
-                    tabla += `| ${mes.Mes} | ${vista} | ${fijo1} | ${fijo3} | ${fijo6} | ${fap} | ${nov} | ${prestamos} |\n`;
+                    tabla += `📅 **${mes.Mes.toUpperCase()}**\n`;
+                    tabla += `┌─────────────────────────────────────────────────────┐\n`;
+                    
+                    // Vista (cuenta de ahorros)
+                    const vista = mes.vista !== undefined ? `${mes.vista}%` : 'N/A';
+                    tabla += `│ 💳 Vista (Ahorros):          ${vista.padEnd(12)} │\n`;
+                    
+                    // Depósitos a plazo fijo
+                    tabla += `│ 📈 DEPÓSITOS A PLAZO FIJO:                        │\n`;
+                    const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : 'N/A';
+                    const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : 'N/A';
+                    const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : 'N/A';
+                    tabla += `│   ├ 1 mes:                   ${fijo1.padEnd(12)} │\n`;
+                    tabla += `│   ├ 3 meses:                 ${fijo3.padEnd(12)} │\n`;
+                    tabla += `│   └ 6 meses:                 ${fijo6.padEnd(12)} │\n`;
+                    
+                    // FAP y otros productos
+                    const fap = mes.FAP !== undefined ? `${mes.FAP}%` : 'N/A';
+                    const nov = mes.Nov !== undefined ? `${mes.Nov}%` : 'N/A';
+                    const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : 'N/A';
+                    tabla += `│ 🏦 FAP (Fondo Ahorro):       ${fap.padEnd(12)} │\n`;
+                    tabla += `│ 🔄 Novación:                 ${nov.padEnd(12)} │\n`;
+                    tabla += `│ 💸 Préstamos:                ${prestamos.padEnd(12)} │\n`;
+                    tabla += `└─────────────────────────────────────────────────────┘\n`;
+                    
+                    // Espaciado entre meses (excepto el último)
+                    if (index < tasasData.length - 1) {
+                        tabla += `\n`;
+                    }
                 }
             });
 
-            tabla += `\n📝 **Leyenda**:\n`;
-            tabla += `• **Vista**: Cuenta de ahorros vista\n`;
-            tabla += `• **Fijo 1M/3M/6M**: Depósitos a plazo fijo (1, 3, 6 meses)\n`;
-            tabla += `• **FAP**: Fondo de Ahorro y Préstamo\n`;
-            tabla += `• **Nov**: Novación\n`;
-            tabla += `• **Préstamos**: Tasa de préstamos\n`;
+            // Sección de resumen y recomendaciones
+            tabla += `\n💡 **INFORMACIÓN ADICIONAL**\n`;
+            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            tabla += `📝 **Descripción de Productos:**\n`;
+            tabla += `• **Vista**: Cuenta de ahorros con disponibilidad inmediata\n`;
+            tabla += `• **Depósitos Fijo**: Inversiones a plazo con tasa garantizada\n`;
+            tabla += `• **FAP**: Fondo de Ahorro y Préstamo para empleados\n`;
+            tabla += `• **Novación**: Renovación automática de depósitos\n`;
+            tabla += `• **Préstamos**: Créditos personales con tasa fija\n\n`;
 
-            // Encontrar tasas más altas para destacar
-            const tasasConDatos = tasasData.filter(mes => mes.vista !== undefined);
+            // Encontrar y destacar las mejores tasas
+            const tasasConDatos = tasasData.filter(mes => 
+                mes.vista !== undefined || mes.fijo6 !== undefined
+            );
+            
+            if (tasasConDatos.length > 0) {
+                // Obtener datos del mes más reciente
+                const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
+                
+                tabla += `⭐ **TASAS DESTACADAS (${ultimasTasas.Mes || 'Último mes'})**\n`;
+                tabla += `┌─────────────────────────────────────────────────────┐\n`;
+                
+                if (ultimasTasas.fijo6) {
+                    tabla += `│ 🏆 MEJOR DEPÓSITO: 6 meses ${ultimasTasas.fijo6}%          │\n`;
+                }
+                if (ultimasTasas.FAP) {
+                    tabla += `│ 💼 FAP EMPLEADOS: ${ultimasTasas.FAP}%                   │\n`;
+                }
+                if (ultimasTasas.vista) {
+                    tabla += `│ 💳 CUENTA VISTA: ${ultimasTasas.vista}%                    │\n`;
+                }
+                
+                tabla += `└─────────────────────────────────────────────────────┘\n`;
+            }
+
+            // Análisis de tendencia (si hay suficientes datos)
+            if (tasasData.length >= 2) {
+                const primerMes = tasasData[0];
+                const ultimoMes = tasasData[tasasData.length - 1];
+                
+                tabla += `\n📊 **ANÁLISIS DE TENDENCIA ${anio}**\n`;
+                tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                
+                if (primerMes.fijo6 && ultimoMes.fijo6) {
+                    const diferencia = ultimoMes.fijo6 - primerMes.fijo6;
+                    const tendencia = diferencia > 0 ? '📈 SUBIDA' : diferencia < 0 ? '📉 BAJADA' : '➡️ ESTABLE';
+                    tabla += `• **Depósitos 6 meses**: ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
+                }
+                
+                if (primerMes.Prestamos && ultimoMes.Prestamos) {
+                    const diferencia = ultimoMes.Prestamos - primerMes.Prestamos;
+                    const tendencia = diferencia > 0 ? '📈 SUBIDA' : diferencia < 0 ? '📉 BAJADA' : '➡️ ESTABLE';
+                    tabla += `• **Préstamos**: ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
+                }
+                
+                if (primerMes.FAP && ultimoMes.FAP) {
+                    const diferencia = ultimoMes.FAP - primerMes.FAP;
+                    const tendencia = diferencia > 0 ? '📈 SUBIDA' : diferencia < 0 ? '📉 BAJADA' : '➡️ ESTABLE';
+                    tabla += `• **FAP**: ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
+                }
+            }
+
+            // Recomendaciones personalizadas
+            tabla += `\n🎯 **RECOMENDACIONES PERSONALIZADAS**\n`;
+            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            
             if (tasasConDatos.length > 0) {
                 const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
-                tabla += `\n💡 **Tasas actuales más competitivas**:\n`;
-                if (ultimasTasas.fijo6) tabla += `• Depósito 6 meses: **${ultimasTasas.fijo6}%**\n`;
-                if (ultimasTasas.FAP) tabla += `• FAP: **${ultimasTasas.FAP}%**\n`;
-                if (ultimasTasas.Prestamos) tabla += `• Préstamos: **${ultimasTasas.Prestamos}%**\n`;
+                
+                // Mejor opción para ahorro
+                const mejorTasa = Math.max(
+                    ultimasTasas.fijo6 || 0,
+                    ultimasTasas.fijo3 || 0,
+                    ultimasTasas.FAP || 0
+                );
+                
+                if (ultimasTasas.fijo6 === mejorTasa) {
+                    tabla += `💡 **Para ahorro a mediano plazo**: Depósito 6 meses (${ultimasTasas.fijo6}%)\n`;
+                } else if (ultimasTasas.FAP === mejorTasa) {
+                    tabla += `💡 **Para empleados**: FAP ofrece la mejor tasa (${ultimasTasas.FAP}%)\n`;
+                }
+                
+                // Análisis de préstamos
+                if (ultimasTasas.Prestamos) {
+                    tabla += `💸 **Para préstamos**: Tasa actual ${ultimasTasas.Prestamos}% - `;
+                    if (ultimasTasas.Prestamos < 13) {
+                        tabla += `Buen momento para solicitar crédito\n`;
+                    } else {
+                        tabla += `Considera esperar si no es urgente\n`;
+                    }
+                }
             }
+
+            tabla += `\n💬 **¿Necesitas asesoría personalizada?** ¡Pregúntame sobre productos específicos!`;
 
             return tabla;
 
@@ -1161,6 +1378,28 @@ ${documentosInfo}
             documentService: documentService.getConfigInfo(),
             timestamp: new Date().toISOString()
         };
+    }
+
+    /**
+     * ✅ NUEVO: Diagnóstico del estado de servicios
+     */
+    async diagnosticarServicios() {
+        const estado = {
+            openai: {
+                disponible: this.openaiAvailable,
+                error: this.initializationError
+            },
+            cosmosDB: {
+                disponible: cosmosService.isAvailable(),
+                config: cosmosService.getConfigInfo()
+            },
+            documentService: {
+                disponible: documentService.isAvailable(),
+                config: documentService.getConfigInfo()
+            }
+        };
+
+        return estado;
     }
 }
 

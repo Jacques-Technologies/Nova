@@ -752,11 +752,10 @@ class TeamsBot extends DialogBot {
             await context.sendActivity('❌ Error procesando tarjeta de login.');
         }
     }
-    url=process.env.NOVA_API_URL 
     async authenticateWithNova(username, password) {
         try {
             console.log(`🔐 Autenticando: ${username}`);
-            
+            const url = process.env.NOVA_API_URL || 'https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login';
             const response = await axios.post(
                url,
                 {

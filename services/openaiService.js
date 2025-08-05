@@ -663,9 +663,9 @@ class OpenAIService {
             };
 
             console.log('📡 Request body para tasas:', JSON.stringify(requestBody, null, 2));
-
+            url=process.env.NOVA_API_URL_TASA || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa';
             const response = await axios.post(
-                'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa',
+                url,
                 requestBody,
                 {
                     headers: {
@@ -1165,3 +1165,4 @@ ${documentosInfo}
 }
 
 module.exports = new OpenAIService();
+    

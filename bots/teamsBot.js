@@ -5,6 +5,7 @@ const { CardFactory } = require('botbuilder');
 const axios = require('axios');
 const openaiService = require('../services/openaiService');
 const cosmosService = require('../services/cosmosService');
+require('dotenv').config();
 
 class TeamsBot extends DialogBot {
     constructor(conversationState, userState) {
@@ -751,13 +752,13 @@ class TeamsBot extends DialogBot {
             await context.sendActivity('❌ Error procesando tarjeta de login.');
         }
     }
-
+    url=process.env.NOVA_API_URL 
     async authenticateWithNova(username, password) {
         try {
             console.log(`🔐 Autenticando: ${username}`);
             
             const response = await axios.post(
-                'https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login',
+               url,
                 {
                     cveUsuario: username,
                     password: password

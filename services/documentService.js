@@ -164,7 +164,7 @@ class DocumentService {
             
             // Configurar opciones de búsqueda
             const searchOptions = {
-                select: ['Chunk', 'FileName', 'Adicional'],
+                select: ['Chunk', 'FileName'],
                 top: 15,
                 searchMode: 'any',
                 queryType: 'full'
@@ -201,8 +201,7 @@ class DocumentService {
                     resultados.push({
                         fileName: doc.FileName,
                         chunk: chunk,
-                        score: score,
-                        adicional: doc.Adicional
+                        score: score
                     });
                 }
                 
@@ -219,7 +218,7 @@ class DocumentService {
                     console.log(`🔍 [${userId}] Búsqueda amplia: "${consultaAmplia}"`);
                     
                     const searchResultsAmplia = await this.searchClient.search(consultaAmplia, {
-                        select: ['Chunk', 'FileName', 'Adicional'],
+                        select: ['Chunk', 'FileName'],
                         top: 10,
                         searchMode: 'any'
                     });
@@ -234,8 +233,7 @@ class DocumentService {
                             resultados.push({
                                 fileName: doc.FileName,
                                 chunk: chunk,
-                                score: result.score || 0,
-                                adicional: doc.Adicional
+                                score: result.score || 0
                             });
                             console.log(`📄 [${userId}] Agregado desde búsqueda amplia: ${doc.FileName}`);
                         }

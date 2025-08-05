@@ -1,9 +1,16 @@
 // index.js - Configuración con Cosmos DB Storage
-// 🔧 MEJORADO: Integración con Cosmos DB para persistencia
+// 🔧 ARREGLADO: Agregada importación faltante de AuthenticationConfiguration
 
 const path = require('path');
 const restify = require('restify');
-const { BotFrameworkAdapter, MemoryStorage, ConversationState, UserState, CosmosDbPartitionedStorage } = require('botbuilder');
+const { 
+    BotFrameworkAdapter, 
+    MemoryStorage, 
+    ConversationState, 
+    UserState, 
+    CosmosDbPartitionedStorage,
+    AuthenticationConfiguration  // ✅ AGREGADO: Esta importación faltaba
+} = require('botbuilder');
 
 // Importar servicios
 const { TeamsBot } = require('./bots/teamsBot');

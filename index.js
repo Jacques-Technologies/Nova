@@ -225,19 +225,19 @@ server.get('/diagnostic', async (req, res) => {
 });
 
 // ✅ NUEVO: Endpoint para estadísticas de Cosmos DB
-server.get('/cosmos-stats', async (req, res, next) => {
+server.get('/cosmos-stats', async (req, res) => {
     try {
         if (!cosmosService.isAvailable()) {
             res.json({
                 available: false,
                 message: 'Cosmos DB no está configurado o disponible'
             });
-            return next();
+            return;
         }
         
         const stats = await cosmosService.getStats();
         res.json(stats);
-        return next();
+        return;
         
     } catch (error) {
         console.error('❌ Error en endpoint /cosmos-stats:', error);
@@ -245,13 +245,13 @@ server.get('/cosmos-stats', async (req, res, next) => {
             error: 'Error obteniendo estadísticas de Cosmos DB',
             details: error.message 
         });
-        return next();
+        return;
     }
 });
 
 // ✅ NUEVO: Endpoint para limpiar datos de desarrollo (solo en desarrollo)
 if (process.env.NODE_ENV === 'development') {
-    server.post('/dev/cleanup', async (req, res, next) => {
+    server.post('/dev/cleanup', async (req, res) => {
         try {
             console.log('🧹 Iniciando limpieza de desarrollo...');
             
@@ -275,7 +275,7 @@ if (process.env.NODE_ENV === 'development') {
                 timestamp: new Date().toISOString()
             });
             
-            return next();
+            return;
             
         } catch (error) {
             console.error('❌ Error en limpieza de desarrollo:', error);
@@ -283,7 +283,7 @@ if (process.env.NODE_ENV === 'development') {
                 error: 'Error en limpieza',
                 details: error.message 
             });
-            return next();
+            return;
         }
     });
 }

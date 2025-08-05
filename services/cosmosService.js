@@ -1,11 +1,11 @@
-// services/cosmosService.js - Servicio de Cosmos DB para persistencia
+// services/cosmosService.js - Servicio de Cosmos DB CORREGIDO para persistencia
 
 const { CosmosClient } = require('@azure/cosmos');
 const { DateTime } = require('luxon');
 require('dotenv').config();
 
 /**
- * Servicio de Cosmos DB para gestionar persistencia de conversaciones y mensajes
+ * Servicio de Cosmos DB CORREGIDO para gestionar persistencia de conversaciones y mensajes
  */
 class CosmosService {
     constructor() {
@@ -88,12 +88,22 @@ class CosmosService {
     }
 
     /**
-     * Guarda un mensaje en Cosmos DB
+     * ✅ MEJORADO: Función saveMessage con mejor validación
      */
     async saveMessage(message, conversationId, userId, userName = null, messageType = 'user') {
         try {
             if (!this.cosmosAvailable) {
                 console.warn('⚠️ Cosmos DB no disponible - mensaje no guardado');
+                return null;
+            }
+
+            // ✅ VALIDACIÓN: Parámetros requeridos
+            if (!message || !conversationId || !userId) {
+                console.error('❌ saveMessage: Parámetros requeridos faltantes', {
+                    hasMessage: !!message,
+                    hasConversationId: !!conversationId,
+                    hasUserId: !!userId
+                });
                 return null;
             }
 
@@ -106,7 +116,7 @@ class CosmosService {
                 conversationId: conversationId,
                 userId: userId,
                 userName: userName,
-                message: message,
+                message: message.substring(0, 4000), // ✅ SEGURIDAD: Limitar tamaño del mensaje
                 messageType: messageType, // 'user' | 'bot' | 'system'
                 timestamp: timestamp,
                 dateCreated: timestamp,
@@ -114,15 +124,27 @@ class CosmosService {
                 ttl: 60 * 60 * 24 * 90 // TTL: 90 días
             };
 
-            console.log(`💾 [${userId}] Guardando mensaje en Cosmos DB...`);
+            console.log(`💾 [${userId}] Guardando mensaje: ${messageType} (${message.length} chars)`);
             
             const { resource: createdItem } = await this.container.items.create(messageDoc);
+            
+            // ✅ ACTUALIZAR: Actividad de conversación después de guardar mensaje
+            // NOTA: No espera el resultado para evitar bloqueos
+            this.updateConversationActivity(conversationId, userId).catch(error => {
+                console.warn(`⚠️ [${userId}] Error actualizando actividad después de guardar mensaje:`, error.message);
+            });
             
             console.log(`✅ [${userId}] Mensaje guardado: ${messageId}`);
             return createdItem;
 
         } catch (error) {
-            console.error(`❌ Error guardando mensaje en Cosmos DB:`, error);
+            console.error(`❌ Error guardando mensaje:`, {
+                error: error.message,
+                conversationId: conversationId,
+                userId: userId,
+                messageType: messageType,
+                messageLength: message?.length || 0
+            });
             return null;
         }
     }
@@ -181,7 +203,7 @@ class CosmosService {
     }
 
     /**
-     * Crea o actualiza información de conversación
+     * ✅ MEJORADO: Función saveConversationInfo con mejor manejo de errores
      */
     async saveConversationInfo(conversationId, userId, userName, additionalData = {}) {
         try {
@@ -193,11 +215,17 @@ class CosmosService {
             const conversationDocId = `conversation_${conversationId}`;
             const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
+            // ✅ VERIFICACIÓN: Datos de entrada válidos
+            if (!conversationId || !userId) {
+                console.error('❌ saveConversationInfo: conversationId o userId faltante');
+                return null;
+            }
+
             const conversationDoc = {
                 id: conversationDocId,
                 conversationId: conversationId,
                 userId: userId,
-                userName: userName,
+                userName: userName || 'Usuario',
                 documentType: 'conversation_info',
                 createdAt: timestamp,
                 lastActivity: timestamp,
@@ -208,16 +236,21 @@ class CosmosService {
                 ...additionalData
             };
 
-            console.log(`💾 [${userId}] Guardando info de conversación en Cosmos DB...`);
+            console.log(`💾 [${userId}] Guardando info de conversación: ${conversationDocId}`);
 
-            // Usar upsert para crear o actualizar
+            // ✅ UPSERT SEGURO: Crear o actualizar
             const { resource: upsertedItem } = await this.container.items.upsert(conversationDoc);
             
-            console.log(`✅ [${userId}] Info de conversación guardada: ${conversationId}`);
+            console.log(`✅ [${userId}] Info de conversación guardada exitosamente`);
             return upsertedItem;
 
         } catch (error) {
-            console.error(`❌ Error guardando info de conversación en Cosmos DB:`, error);
+            console.error(`❌ Error en saveConversationInfo:`, {
+                error: error.message,
+                conversationId: conversationId,
+                userId: userId,
+                userName: userName
+            });
             return null;
         }
     }
@@ -253,42 +286,137 @@ class CosmosService {
     }
 
     /**
-     * Actualiza la última actividad de una conversación
+     * ✅ CORREGIDO: Actualiza la última actividad de una conversación
+     * Arregla el error: "Cannot set properties of undefined (setting 'lastActivity')"
      */
     async updateConversationActivity(conversationId, userId) {
         try {
             if (!this.cosmosAvailable) {
+                console.log(`ℹ️ [${userId}] Cosmos DB no disponible - saltando actualización de actividad`);
                 return false;
             }
 
             const conversationDocId = `conversation_${conversationId}`;
             const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
-            // Obtener documento actual
+            console.log(`🔄 [${userId}] Actualizando actividad de conversación: ${conversationDocId}`);
+
             let conversationDoc;
+            
             try {
+                // ✅ CORREGIDO: Verificar si el documento existe antes de intentar actualizarlo
                 const { resource } = await this.container
                     .item(conversationDocId, userId)
                     .read();
+                
                 conversationDoc = resource;
-            } catch (error) {
-                if (error.code === 404) {
-                    // Crear nuevo documento si no existe
-                    return await this.saveConversationInfo(conversationId, userId, 'Usuario');
+                console.log(`📋 [${userId}] Documento de conversación encontrado`);
+                
+            } catch (readError) {
+                if (readError.code === 404) {
+                    console.log(`ℹ️ [${userId}] Documento de conversación no existe, creando nuevo...`);
+                    
+                    // ✅ NUEVO: Crear documento de conversación si no existe
+                    try {
+                        const newConversationDoc = {
+                            id: conversationDocId,
+                            conversationId: conversationId,
+                            userId: userId,
+                            userName: 'Usuario', // Placeholder, se puede actualizar después
+                            documentType: 'conversation_info',
+                            createdAt: timestamp,
+                            lastActivity: timestamp,
+                            messageCount: 1, // Primera actividad
+                            isActive: true,
+                            partitionKey: userId,
+                            ttl: 60 * 60 * 24 * 90 // TTL: 90 días
+                        };
+
+                        const { resource: createdDoc } = await this.container.items.create(newConversationDoc);
+                        console.log(`✅ [${userId}] Nuevo documento de conversación creado: ${conversationDocId}`);
+                        return true;
+                        
+                    } catch (createError) {
+                        console.error(`❌ [${userId}] Error creando documento de conversación:`, createError.message);
+                        return false;
+                    }
+                } else {
+                    // Error diferente a 404
+                    console.error(`❌ [${userId}] Error leyendo documento de conversación:`, readError.message);
+                    return false;
                 }
-                throw error;
             }
 
-            // Actualizar campos
-            conversationDoc.lastActivity = timestamp;
-            conversationDoc.messageCount = (conversationDoc.messageCount || 0) + 1;
+            // ✅ VERIFICACIÓN: Asegurar que tenemos el documento antes de actualizar
+            if (!conversationDoc) {
+                console.error(`❌ [${userId}] conversationDoc es undefined después de lectura`);
+                return false;
+            }
 
-            await this.container.items.upsert(conversationDoc);
-            
-            return true;
+            // ✅ ACTUALIZACIÓN SEGURA: Verificar propiedades antes de actualizar
+            try {
+                // Asegurar que las propiedades existen
+                if (typeof conversationDoc !== 'object') {
+                    console.error(`❌ [${userId}] conversationDoc no es un objeto válido:`, typeof conversationDoc);
+                    return false;
+                }
+
+                // Actualizar campos de forma segura
+                conversationDoc.lastActivity = timestamp;
+                conversationDoc.messageCount = (conversationDoc.messageCount || 0) + 1;
+                conversationDoc.isActive = true;
+
+                // ✅ UPSERT SEGURO: Usar upsert para garantizar la actualización
+                const { resource: updatedDoc } = await this.container.items.upsert(conversationDoc);
+                
+                console.log(`✅ [${userId}] Actividad de conversación actualizada exitosamente`);
+                console.log(`📊 [${userId}] Mensajes totales: ${updatedDoc.messageCount}, Última actividad: ${updatedDoc.lastActivity}`);
+                
+                return true;
+
+            } catch (updateError) {
+                console.error(`❌ [${userId}] Error actualizando documento:`, updateError.message);
+                return false;
+            }
 
         } catch (error) {
-            console.error(`❌ Error actualizando actividad de conversación:`, error);
+            console.error(`❌ [${userId}] Error general en updateConversationActivity:`, {
+                error: error.message,
+                conversationId: conversationId,
+                userId: userId,
+                stack: error.stack?.split('\n')[0] // Solo primera línea del stack
+            });
+            return false;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Función auxiliar para verificar si un documento de conversación existe
+     */
+    async checkConversationExists(conversationId, userId) {
+        try {
+            if (!this.cosmosAvailable) {
+                return false;
+            }
+
+            const conversationDocId = `conversation_${conversationId}`;
+            
+            try {
+                await this.container.item(conversationDocId, userId).read();
+                console.log(`✅ [${userId}] Documento de conversación existe: ${conversationDocId}`);
+                return true;
+            } catch (error) {
+                if (error.code === 404) {
+                    console.log(`ℹ️ [${userId}] Documento de conversación no existe: ${conversationDocId}`);
+                    return false;
+                } else {
+                    console.error(`❌ [${userId}] Error verificando existencia del documento:`, error.message);
+                    return false;
+                }
+            }
+
+        } catch (error) {
+            console.error(`❌ [${userId}] Error en checkConversationExists:`, error.message);
             return false;
         }
     }

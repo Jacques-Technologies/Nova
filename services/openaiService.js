@@ -858,7 +858,8 @@ class OpenAIService {
     }
 
     /**
-     * ✅ COMPLETAMENTE NUEVO: Formatear tabla de tasas con diseño mejorado para Teams
+     * ✅ NUEVO: Formatear tabla de tasas COMPLETAMENTE REDISEÑADO para Teams
+     * Formato simple, limpio y totalmente compatible
      */
     formatearTablaTasas(tasasData, anio, usuario) {
         try {
@@ -866,81 +867,85 @@ class OpenAIService {
                 return "❌ **Error**: Datos de tasas inválidos";
             }
 
-            // Encabezado principal más atractivo
-            let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n`;
-            tabla += `═══════════════════════════════════════════════════════════════\n`;
-            tabla += `👤 **Usuario**: ${usuario}\n`;
-            tabla += `📅 **Año Consultado**: ${anio}\n`;
-            tabla += `🕐 **Última Actualización**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
+            // Encabezado principal estilizado pero simple
+            let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n\n`;
+            tabla += `👤 **Usuario**: ${usuario}  📅 **Año**: ${anio}  🕐 **Actualizado**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
 
-            // Formato mejorado sin tabla markdown (que Teams no renderiza bien)
+            // Procesar cada mes con formato limpio
+            tabla += `📊 **DETALLE POR MES:**\n\n`;
+            
             tasasData.forEach((mes, index) => {
                 if (mes.Mes) {
-                    tabla += `📅 **${mes.Mes.toUpperCase()}**\n`;
-                    tabla += `┌─────────────────────────────────────────────────────┐\n`;
+                    // Encabezado del mes con separador visual
+                    tabla += `🗓️ **${mes.Mes.toUpperCase()}**\n`;
+                    tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
                     
-                    // Vista (cuenta de ahorros)
+                    // Cuenta Vista
                     const vista = mes.vista !== undefined ? `${mes.vista}%` : 'N/A';
-                    tabla += `│ 💳 Vista (Ahorros):          ${vista.padEnd(12)} │\n`;
+                    tabla += `💳 **Cuenta Vista (Ahorros):** ${vista}\n`;
                     
-                    // Depósitos a plazo fijo
-                    tabla += `│ 📈 DEPÓSITOS A PLAZO FIJO:                        │\n`;
+                    // Depósitos a Plazo Fijo
+                    tabla += `📈 **Depósitos a Plazo Fijo:**\n`;
                     const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : 'N/A';
                     const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : 'N/A';
                     const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : 'N/A';
-                    tabla += `│   ├ 1 mes:                   ${fijo1.padEnd(12)} │\n`;
-                    tabla += `│   ├ 3 meses:                 ${fijo3.padEnd(12)} │\n`;
-                    tabla += `│   └ 6 meses:                 ${fijo6.padEnd(12)} │\n`;
+                    tabla += `   🔸 1 mes: ${fijo1}    🔸 3 meses: ${fijo3}    🔸 6 meses: ${fijo6}\n`;
                     
-                    // FAP y otros productos
+                    // Otros productos financieros
                     const fap = mes.FAP !== undefined ? `${mes.FAP}%` : 'N/A';
                     const nov = mes.Nov !== undefined ? `${mes.Nov}%` : 'N/A';
                     const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : 'N/A';
-                    tabla += `│ 🏦 FAP (Fondo Ahorro):       ${fap.padEnd(12)} │\n`;
-                    tabla += `│ 🔄 Novación:                 ${nov.padEnd(12)} │\n`;
-                    tabla += `│ 💸 Préstamos:                ${prestamos.padEnd(12)} │\n`;
-                    tabla += `└─────────────────────────────────────────────────────┘\n`;
                     
-                    // Espaciado entre meses (excepto el último)
+                    tabla += `🏦 **FAP (Fondo Ahorro):** ${fap}    🔄 **Novación:** ${nov}\n`;
+                    tabla += `💸 **Préstamos:** ${prestamos}\n`;
+                    
+                    // Espaciado entre meses
                     if (index < tasasData.length - 1) {
                         tabla += `\n`;
                     }
                 }
             });
 
-            // Sección de resumen y recomendaciones
-            tabla += `\n💡 **INFORMACIÓN ADICIONAL**\n`;
-            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-            tabla += `📝 **Descripción de Productos:**\n`;
-            tabla += `• **Vista**: Cuenta de ahorros con disponibilidad inmediata\n`;
-            tabla += `• **Depósitos Fijo**: Inversiones a plazo con tasa garantizada\n`;
-            tabla += `• **FAP**: Fondo de Ahorro y Préstamo para empleados\n`;
-            tabla += `• **Novación**: Renovación automática de depósitos\n`;
-            tabla += `• **Préstamos**: Créditos personales con tasa fija\n\n`;
+            // Sección de análisis y recomendaciones
+            tabla += `\n\n💡 **ANÁLISIS Y RECOMENDACIONES**\n`;
+            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
 
-            // Encontrar y destacar las mejores tasas
+            // Encontrar mejores tasas del último mes
             const tasasConDatos = tasasData.filter(mes => 
                 mes.vista !== undefined || mes.fijo6 !== undefined
             );
             
             if (tasasConDatos.length > 0) {
-                // Obtener datos del mes más reciente
                 const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
                 
-                tabla += `⭐ **TASAS DESTACADAS (${ultimasTasas.Mes || 'Último mes'})**\n`;
-                tabla += `┌─────────────────────────────────────────────────────┐\n`;
+                tabla += `⭐ **MEJORES OPCIONES ACTUALES (${ultimasTasas.Mes || 'Último mes'}):**\n\n`;
                 
-                if (ultimasTasas.fijo6) {
-                    tabla += `│ 🏆 MEJOR DEPÓSITO: 6 meses ${ultimasTasas.fijo6}%          │\n`;
-                }
-                if (ultimasTasas.FAP) {
-                    tabla += `│ 💼 FAP EMPLEADOS: ${ultimasTasas.FAP}%                   │\n`;
-                }
-                if (ultimasTasas.vista) {
-                    tabla += `│ 💳 CUENTA VISTA: ${ultimasTasas.vista}%                    │\n`;
+                // Destacar la mejor tasa para ahorro
+                const tasasAhorro = [
+                    { tipo: 'Depósito 6 meses', tasa: ultimasTasas.fijo6, emoji: '🏆' },
+                    { tipo: 'FAP Empleados', tasa: ultimasTasas.FAP, emoji: '💼' },
+                    { tipo: 'Depósito 3 meses', tasa: ultimasTasas.fijo3, emoji: '📊' },
+                    { tipo: 'Cuenta Vista', tasa: ultimasTasas.vista, emoji: '💳' }
+                ].filter(item => item.tasa !== undefined)
+                 .sort((a, b) => b.tasa - a.tasa);
+
+                if (tasasAhorro.length > 0) {
+                    tabla += `${tasasAhorro[0].emoji} **MEJOR PARA AHORRAR:** ${tasasAhorro[0].tipo} - **${tasasAhorro[0].tasa}%**\n`;
+                    
+                    if (tasasAhorro.length > 1) {
+                        tabla += `${tasasAhorro[1].emoji} **SEGUNDA OPCIÓN:** ${tasasAhorro[1].tipo} - **${tasasAhorro[1].tasa}%**\n`;
+                    }
                 }
                 
-                tabla += `└─────────────────────────────────────────────────────┘\n`;
+                // Información sobre préstamos
+                if (ultimasTasas.Prestamos) {
+                    tabla += `💸 **PRÉSTAMOS:** ${ultimasTasas.Prestamos}% - `;
+                    if (ultimasTasas.Prestamos < 13) {
+                        tabla += `✅ Tasa competitiva\n`;
+                    } else {
+                        tabla += `⚠️ Considera comparar opciones\n`;
+                    }
+                }
             }
 
             // Análisis de tendencia (si hay suficientes datos)
@@ -948,60 +953,28 @@ class OpenAIService {
                 const primerMes = tasasData[0];
                 const ultimoMes = tasasData[tasasData.length - 1];
                 
-                tabla += `\n📊 **ANÁLISIS DE TENDENCIA ${anio}**\n`;
-                tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                tabla += `\n📊 **TENDENCIA DEL AÑO ${anio}:**\n`;
                 
                 if (primerMes.fijo6 && ultimoMes.fijo6) {
                     const diferencia = ultimoMes.fijo6 - primerMes.fijo6;
-                    const tendencia = diferencia > 0 ? '📈 SUBIDA' : diferencia < 0 ? '📉 BAJADA' : '➡️ ESTABLE';
-                    tabla += `• **Depósitos 6 meses**: ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
+                    const tendencia = diferencia > 0 ? '📈 Subieron' : diferencia < 0 ? '📉 Bajaron' : '➡️ Estables';
+                    tabla += `🔸 **Depósitos 6 meses:** ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
                 }
                 
                 if (primerMes.Prestamos && ultimoMes.Prestamos) {
                     const diferencia = ultimoMes.Prestamos - primerMes.Prestamos;
-                    const tendencia = diferencia > 0 ? '📈 SUBIDA' : diferencia < 0 ? '📉 BAJADA' : '➡️ ESTABLE';
-                    tabla += `• **Préstamos**: ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
-                }
-                
-                if (primerMes.FAP && ultimoMes.FAP) {
-                    const diferencia = ultimoMes.FAP - primerMes.FAP;
-                    const tendencia = diferencia > 0 ? '📈 SUBIDA' : diferencia < 0 ? '📉 BAJADA' : '➡️ ESTABLE';
-                    tabla += `• **FAP**: ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
+                    const tendencia = diferencia > 0 ? '📈 Subieron' : diferencia < 0 ? '📉 Bajaron' : '➡️ Estables';
+                    tabla += `🔸 **Préstamos:** ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
                 }
             }
 
-            // Recomendaciones personalizadas
-            tabla += `\n🎯 **RECOMENDACIONES PERSONALIZADAS**\n`;
-            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-            
-            if (tasasConDatos.length > 0) {
-                const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
-                
-                // Mejor opción para ahorro
-                const mejorTasa = Math.max(
-                    ultimasTasas.fijo6 || 0,
-                    ultimasTasas.fijo3 || 0,
-                    ultimasTasas.FAP || 0
-                );
-                
-                if (ultimasTasas.fijo6 === mejorTasa) {
-                    tabla += `💡 **Para ahorro a mediano plazo**: Depósito 6 meses (${ultimasTasas.fijo6}%)\n`;
-                } else if (ultimasTasas.FAP === mejorTasa) {
-                    tabla += `💡 **Para empleados**: FAP ofrece la mejor tasa (${ultimasTasas.FAP}%)\n`;
-                }
-                
-                // Análisis de préstamos
-                if (ultimasTasas.Prestamos) {
-                    tabla += `💸 **Para préstamos**: Tasa actual ${ultimasTasas.Prestamos}% - `;
-                    if (ultimasTasas.Prestamos < 13) {
-                        tabla += `Buen momento para solicitar crédito\n`;
-                    } else {
-                        tabla += `Considera esperar si no es urgente\n`;
-                    }
-                }
-            }
+            // Descripción de productos (más concisa)
+            tabla += `\n📋 **TIPOS DE PRODUCTOS:**\n`;
+            tabla += `💳 **Vista:** Disponibilidad inmediata  📈 **Depósitos:** Tasa fija garantizada\n`;
+            tabla += `🏦 **FAP:** Fondo empleados  🔄 **Novación:** Renovación automática  💸 **Préstamos:** Créditos personales\n`;
 
-            tabla += `\n💬 **¿Necesitas asesoría personalizada?** ¡Pregúntame sobre productos específicos!`;
+            // Call to action
+            tabla += `\n💬 **¿Necesitas asesoría personalizada?** Pregúntame sobre cualquier producto específico.`;
 
             return tabla;
 

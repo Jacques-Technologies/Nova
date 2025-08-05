@@ -1,18 +1,9 @@
-// index.js - Configuración corregida con Cosmos DB Storage
-// 🔧 CORREGIDO: Import correcto de CosmosDbPartitionedStorage
+// index.js - Configuración con Cosmos DB Storage
+// 🔧 MEJORADO: Integración con Cosmos DB para persistencia
 
 const path = require('path');
 const restify = require('restify');
-const { 
-    BotFrameworkAdapter, 
-    MemoryStorage, 
-    ConversationState, 
-    UserState
-    // ❌ NO: CosmosDbPartitionedStorage - NO está en 'botbuilder'
-} = require('botbuilder');
-
-// ✅ SÍ: CosmosDbPartitionedStorage está en 'botbuilder-azure'
-const { CosmosDbPartitionedStorage } = require('botbuilder-azure');
+const { BotFrameworkAdapter, MemoryStorage, ConversationState, UserState, CosmosDbPartitionedStorage } = require('botbuilder');
 
 // Importar servicios
 const { TeamsBot } = require('./bots/teamsBot');
@@ -33,45 +24,27 @@ server.listen(process.env.port || process.env.PORT || 3978, () => {
     console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Memoria temporal'}`);
 });
 
-// 🔧 MEJORADO: Configuración más robusta del adaptador
-const adapter = new BotFrameworkAdapter({
-    appId: process.env.MicrosoftAppId,
-    appPassword: process.env.MicrosoftAppPassword,
-    // ✅ NUEVO: Deshabilitar validación en desarrollo si no tienes AppId
-    authConfig: {
-        validateClaims: process.env.NODE_ENV === 'production'
+// Crear adaptador del Bot Framework
+const adapter = new BotFrameworkAdapter(
+    {
+        appId: process.env.MicrosoftAppId,
+        appPassword: process.env.MicrosoftAppPassword
     },
-    // ✅ NUEVO: Configuración adicional para mejor debugging
-    enableSkillsBasedConversation: false
-});
+    new AuthenticationConfiguration()
+);
 
-// 🔧 MEJORADO: Manejo de errores más específico
+// Manejo de errores del adaptador
 adapter.onTurnError = async (context, error) => {
     console.error('❌ Error en bot:', error);
     
-    // Log específico para errores de autenticación
-    if (error.message.includes('Unauthorized') || error.message.includes('Invalid AppId')) {
-        console.error('🔐 ERROR DE AUTENTICACIÓN DETECTADO:');
-        console.error(`   AppId configurado: ${process.env.MicrosoftAppId || 'NO CONFIGURADO'}`);
-        console.error(`   AppPassword configurado: ${process.env.MicrosoftAppPassword ? 'SÍ' : 'NO'}`);
-        console.error('   SOLUCIÓN: Verifica las variables MicrosoftAppId y MicrosoftAppPassword');
-    }
-    
-    // Solo enviar mensaje de error si el contexto está disponible
-    try {
-        if (context && context.sendActivity) {
-            await context.sendActivity('❌ **Error del bot**\n\nOcurrió un error inesperado. Intenta nuevamente.');
-        }
-    } catch (sendError) {
-        console.error('Error enviando mensaje de error:', sendError.message);
-    }
+    await context.sendActivity('❌ **Error del bot**\n\nOcurrió un error inesperado. Intenta nuevamente.');
     
     // Limpiar estados en caso de error (con mejor manejo)
     try {
-        if (conversationState && context) {
+        if (conversationState) {
             await conversationState.delete(context);
         }
-        if (userState && context) {
+        if (userState) {
             await userState.delete(context);
         }
     } catch (cleanupError) {
@@ -79,7 +52,7 @@ adapter.onTurnError = async (context, error) => {
     }
 };
 
-// ✅ MEJORADO: Configurar almacenamiento con manejo de errores más robusto
+// ✅ NUEVO: Configurar almacenamiento con Cosmos DB o fallback a memoria
 let storage;
 let conversationState;
 let userState;
@@ -92,20 +65,6 @@ async function initializeStorage() {
         if (cosmosService.isAvailable()) {
             console.log('🌐 Configurando Cosmos DB Storage...');
             
-            // ✅ VALIDAR: Todas las variables necesarias
-            const requiredEnvVars = [
-                'COSMOS_DB_ENDPOINT',
-                'COSMOS_DB_KEY',
-                'COSMOS_DB_DATABASE_ID',
-                'COSMOS_DB_CONTAINER_ID'
-            ];
-            
-            const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-            
-            if (missingVars.length > 0) {
-                throw new Error(`Variables de Cosmos DB faltantes: ${missingVars.join(', ')}`);
-            }
-            
             storage = new CosmosDbPartitionedStorage({
                 cosmosDbEndpoint: process.env.COSMOS_DB_ENDPOINT,
                 authKey: process.env.COSMOS_DB_KEY,
@@ -117,26 +76,30 @@ async function initializeStorage() {
             console.log('✅ Cosmos DB Storage configurado exitosamente');
             
         } else {
-            throw new Error('Cosmos DB no está disponible o configurado');
+            // ✅ FALLBACK: Usar memoria si Cosmos DB no está disponible
+            console.warn('⚠️ Cosmos DB no disponible, usando MemoryStorage como fallback');
+            storage = new MemoryStorage();
         }
         
-    } catch (cosmosError) {
-        console.error('❌ Error configurando Cosmos DB:', cosmosError.message);
-        console.log('🔄 Usando MemoryStorage como fallback...');
+        // Crear estados de conversación y usuario
+        conversationState = new ConversationState(storage);
+        userState = new UserState(storage);
+        
+        console.log(`✅ Estados inicializados con ${cosmosService.isAvailable() ? 'Cosmos DB' : 'MemoryStorage'}`);
+        
+    } catch (error) {
+        console.error('❌ Error inicializando Cosmos DB, usando MemoryStorage:', error.message);
         
         // ✅ FALLBACK SEGURO: Siempre usar MemoryStorage si hay problemas
         storage = new MemoryStorage();
+        conversationState = new ConversationState(storage);
+        userState = new UserState(storage);
+        
         console.log('✅ MemoryStorage configurado como fallback');
     }
-    
-    // Crear estados de conversación y usuario
-    conversationState = new ConversationState(storage);
-    userState = new UserState(storage);
-    
-    console.log(`✅ Estados inicializados con ${storage.constructor.name}`);
 }
 
-// ✅ MEJORADO: Inicialización con mejor manejo de errores
+// ✅ NUEVO: Inicialización async del storage
 initializeStorage().then(() => {
     // Crear instancia del bot después de inicializar storage
     const bot = new TeamsBot(conversationState, userState);
@@ -146,21 +109,8 @@ initializeStorage().then(() => {
         try {
             await adapter.process(req, res, (context) => bot.run(context));
         } catch (error) {
-            console.error('❌ Error procesando mensaje:', error.message);
-            
-            // Respuesta específica para errores de autenticación
-            if (error.message.includes('Unauthorized') || error.message.includes('Invalid AppId')) {
-                res.status(401).send({
-                    error: 'Bot authentication error',
-                    message: 'Check MicrosoftAppId and MicrosoftAppPassword configuration',
-                    details: error.message
-                });
-            } else {
-                res.status(500).send({
-                    error: 'Internal server error',
-                    message: error.message
-                });
-            }
+            console.error('❌ Error procesando mensaje:', error);
+            res.status(500).send('Error interno del servidor');
         }
     });
     
@@ -171,7 +121,7 @@ initializeStorage().then(() => {
     process.exit(1);
 });
 
-// 🔧 MEJORADO: Endpoint de salud con información de configuración
+// 🔧 MEJORADO: Endpoint de salud con información de Cosmos DB
 server.get('/health', (req, res, next) => {
     try {
         const cosmosInfo = cosmosService.getConfigInfo();
@@ -181,16 +131,6 @@ server.get('/health', (req, res, next) => {
             status: 'OK',
             timestamp: new Date().toISOString(),
             bot: 'Nova Bot con Cosmos DB y Azure Search',
-            configuration: {
-                // ✅ NUEVO: Información de configuración de autenticación
-                botAuthentication: {
-                    appIdConfigured: !!process.env.MicrosoftAppId,
-                    appPasswordConfigured: !!process.env.MicrosoftAppPassword,
-                    appId: process.env.MicrosoftAppId ? 
-                        `${process.env.MicrosoftAppId.substring(0, 8)}...` : 
-                        'NOT_CONFIGURED'
-                }
-            },
             features: {
                 customLogin: true,
                 oauth: false,
@@ -223,10 +163,7 @@ server.get('/health', (req, res, next) => {
     }
 });
 
-// Resto del código permanece igual...
-// (diagnostic, cosmos-stats, cleanup endpoints)
-
-// 🔧 MEJORADO: Endpoint de diagnóstico con información de autenticación
+// 🔧 MEJORADO: Endpoint de diagnóstico con estadísticas de Cosmos DB
 server.get('/diagnostic', async (req, res) => {
     try {
         // Obtener estadísticas de Cosmos DB
@@ -255,15 +192,6 @@ server.get('/diagnostic', async (req, res) => {
                 authenticatedUsers: global.botInstance?.getStats?.()?.authenticatedUsers || 0,
                 timestamp: new Date().toISOString()
             },
-            // ✅ NUEVO: Información de autenticación del bot
-            authentication: {
-                appId: process.env.MicrosoftAppId || 'NOT_CONFIGURED',
-                appIdPreview: process.env.MicrosoftAppId ? 
-                    `${process.env.MicrosoftAppId.substring(0, 8)}...${process.env.MicrosoftAppId.slice(-4)}` : 
-                    'NOT_CONFIGURED',
-                appPasswordConfigured: !!process.env.MicrosoftAppPassword,
-                authenticationEnabled: !!(process.env.MicrosoftAppId && process.env.MicrosoftAppPassword)
-            },
             memory: {
                 used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
                 total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
@@ -272,7 +200,6 @@ server.get('/diagnostic', async (req, res) => {
             environment: {
                 hasOpenAI: !!process.env.OPENAI_API_KEY,
                 hasBotId: !!process.env.MicrosoftAppId,
-                hasBotPassword: !!process.env.MicrosoftAppPassword,
                 nodeVersion: process.version,
                 cosmosConfigured: !!process.env.COSMOS_DB_ENDPOINT,
                 azureSearchConfigured: !!(process.env.AZURE_SEARCH_ENDPOINT || process.env.SERVICE_ENDPOINT)
@@ -371,27 +298,10 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// ✅ MEJORADO: Información de configuración con diagnóstico de autenticación
+// ✅ MEJORADO: Información de configuración más completa
 console.log('\n═══════════════════════════════════════');
 console.log('📋 CONFIGURACIÓN NOVA BOT');
 console.log('═══════════════════════════════════════');
-
-// ✅ NUEVO: Diagnóstico de autenticación
-console.log('🔐 AUTENTICACIÓN DEL BOT:');
-if (process.env.MicrosoftAppId && process.env.MicrosoftAppPassword) {
-    console.log(`   App ID: ${process.env.MicrosoftAppId.substring(0, 8)}...${process.env.MicrosoftAppId.slice(-4)}`);
-    console.log('   App Password: ✅ Configurado');
-    console.log('   Estado: 🟢 Autenticación completa');
-} else if (process.env.MicrosoftAppId) {
-    console.log(`   App ID: ${process.env.MicrosoftAppId}`);
-    console.log('   App Password: ❌ FALTANTE');
-    console.log('   Estado: 🔴 Configuración incompleta');
-} else {
-    console.log('   App ID: ❌ FALTANTE');
-    console.log('   App Password: ❌ FALTANTE');
-    console.log('   Estado: 🔴 Sin configurar (solo desarrollo local)');
-}
-
 console.log('🔐 Login: Tarjeta personalizada con usuario/contraseña');
 console.log('🌐 API Nova: https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login');
 console.log('🤖 OpenAI: ' + (process.env.OPENAI_API_KEY ? '✅ Configurado' : '❌ No configurado'));
@@ -434,26 +344,7 @@ if (documentService.isAvailable()) {
 }
 console.log('═══════════════════════════════════════');
 
-// ✅ NUEVO: Diagnóstico completo de variables de entorno
-console.log('\n🔍 DIAGNÓSTICO DE CONFIGURACIÓN:');
-
-// Variables de Bot Framework
-const requiredBotVars = ['MicrosoftAppId', 'MicrosoftAppPassword'];
-const missingBotVars = requiredBotVars.filter(varName => !process.env[varName]);
-
-if (missingBotVars.length > 0) {
-    console.log('\n🔴 VARIABLES DE BOT FRAMEWORK FALTANTES:');
-    missingBotVars.forEach(varName => {
-        console.log(`   ${varName}`);
-    });
-    console.log('\n⚠️  IMPORTANTE: Sin estas variables el bot NO funcionará en producción');
-    console.log('📝 Para desarrollo local, puedes dejarlas vacías');
-    console.log('🌐 Para producción, obtén estos valores de Azure Bot Service\n');
-} else {
-    console.log('\n✅ BOT FRAMEWORK CORRECTAMENTE CONFIGURADO\n');
-}
-
-// Variables de Cosmos DB
+// Variables de entorno requeridas para Cosmos DB
 const requiredCosmosVars = [
     'COSMOS_DB_ENDPOINT',
     'COSMOS_DB_KEY', 
@@ -461,28 +352,36 @@ const requiredCosmosVars = [
     'COSMOS_DB_CONTAINER_ID'
 ];
 
+// Variables de entorno requeridas para Azure Search
+const requiredSearchVars = [
+    'AZURE_SEARCH_ENDPOINT',
+    'AZURE_SEARCH_API_KEY'
+];
+
+// Variables alternativas para Azure Search (compatibilidad)
+const alternativeSearchVars = [
+    'SERVICE_ENDPOINT',
+    'API_KEY'
+];
+
 const missingCosmosVars = requiredCosmosVars.filter(varName => !process.env[varName]);
+const missingSearchVars = requiredSearchVars.filter(varName => !process.env[varName]);
+const hasAlternativeSearch = alternativeSearchVars.every(varName => process.env[varName]);
 
 if (missingCosmosVars.length > 0) {
-    console.log('⚠️  VARIABLES DE COSMOS DB FALTANTES:');
+    console.log('\n⚠️  VARIABLES DE COSMOS DB FALTANTES:');
     missingCosmosVars.forEach(varName => {
         console.log(`   ${varName}`);
     });
     console.log('\nℹ️  Usando MemoryStorage como fallback');
     console.log('📝 Para habilitar persistencia, configura estas variables en .env\n');
 } else if (!cosmosService.isAvailable()) {
-    console.log('🔴 COSMOS DB CONFIGURADO PERO NO ACCESIBLE');
+    console.log('\n🔴 COSMOS DB CONFIGURADO PERO NO ACCESIBLE');
     console.log('   Verifica la conectividad y credenciales');
     console.log('   Usando MemoryStorage como fallback\n');
 } else {
-    console.log('✅ COSMOS DB OPERATIVO - Persistencia habilitada\n');
+    console.log('\n✅ COSMOS DB OPERATIVO - Persistencia habilitada\n');
 }
-
-// Variables de Azure Search
-const requiredSearchVars = ['AZURE_SEARCH_ENDPOINT', 'AZURE_SEARCH_API_KEY'];
-const alternativeSearchVars = ['SERVICE_ENDPOINT', 'API_KEY'];
-const missingSearchVars = requiredSearchVars.filter(varName => !process.env[varName]);
-const hasAlternativeSearch = alternativeSearchVars.every(varName => process.env[varName]);
 
 if (missingSearchVars.length > 0 && !hasAlternativeSearch) {
     console.log('⚠️  VARIABLES DE AZURE SEARCH FALTANTES:');

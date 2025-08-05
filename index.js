@@ -32,13 +32,10 @@ server.listen(process.env.port || process.env.PORT || 3978, () => {
 });
 
 // Crear adaptador del Bot Framework
-const adapter = new BotFrameworkAdapter(
-    {
-        appId: process.env.MicrosoftAppId,
-        appPassword: process.env.MicrosoftAppPassword
-    },
-    new AuthenticationConfiguration()
-);
+const adapter = new BotFrameworkAdapter({
+    appId: process.env.MicrosoftAppId,
+    appPassword: process.env.MicrosoftAppPassword
+});
 
 // Manejo de errores del adaptador
 adapter.onTurnError = async (context, error) => {

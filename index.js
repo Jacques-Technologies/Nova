@@ -167,7 +167,7 @@ server.get('/health', (req, res, next) => {
 });
 
 // 🔧 MEJORADO: Endpoint de diagnóstico con estadísticas de Cosmos DB
-server.get('/diagnostic', async (req, res, next) => {
+server.get('/diagnostic', async (req, res) => {
     try {
         // Obtener estadísticas de Cosmos DB
         let cosmosStats = null;
@@ -218,11 +218,9 @@ server.get('/diagnostic', async (req, res, next) => {
                 stats: documentStats
             }
         });
-        return next();
     } catch (error) {
         console.error('❌ Error en endpoint /diagnostic:', error);
         res.status(500).json({ error: 'Internal server error' });
-        return next();
     }
 });
 

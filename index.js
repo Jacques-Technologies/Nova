@@ -350,7 +350,7 @@ if (!process.env.MicrosoftAppPassword) criticalMissing.push('MicrosoftAppPasswor
 
 if (criticalMissing.length > 0) {
     console.error('\n🚨 CONFIGURACIÓN CRÍTICA FALTANTE:');
-    criticalMissing.forEach(var => console.error(`   ❌ ${var}`));
+    criticalMissing.forEach(varName => console.error(`   ❌ ${varName}`));
     console.error('\n   El bot NO funcionará sin estas variables.\n');
 }
 

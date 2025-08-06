@@ -1,4 +1,4 @@
-// index.js - SOLUCION SIMPLE para Tenant ID (sin AuthenticationConfiguration)
+// index.js - SOLUCION COMPLETA para AADSTS700016
 const path = require('path');
 const restify = require('restify');
 const { 
@@ -7,7 +7,6 @@ const {
     ConversationState, 
     UserState, 
     CosmosDbPartitionedStorage
-    // ✅ REMOVIDO: AuthenticationConfiguration (no disponible en todas las versiones)
 } = require('botbuilder');
 
 // Importar servicios
@@ -18,90 +17,136 @@ const documentService = require('./services/documentService');
 // Configurar variables de entorno
 require('dotenv').config();
 
-// ✅ VALIDACIÓN: Variables críticas para Bot Framework
+// ✅ PASO 1: VALIDACIÓN CRÍTICA
+console.log('🔍 DIAGNÓSTICO AZURE AD - AADSTS700016');
+console.log('═══════════════════════════════════════');
+
+const appId = process.env.MicrosoftAppId;
+const appPassword = process.env.MicrosoftAppPassword;
+const tenantId = process.env.MicrosoftAppTenantId;
+
+console.log(`🔑 App ID: ${appId ? '✅ Configurado' : '❌ FALTANTE'}`);
+console.log(`🔒 App Password: ${appPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
+console.log(`🏢 Tenant ID: ${tenantId ? '✅ Configurado' : '❌ FALTANTE - CAUSA DEL ERROR'}`);
+
+if (appId) {
+    console.log(`   App ID Value: ${appId}`);
+}
+if (tenantId) {
+    console.log(`   Tenant ID Value: ${tenantId}`);
+} else {
+    console.log('   ⚠️ CRITICAL: Tenant ID es REQUERIDO para evitar AADSTS700016');
+}
+
+// ✅ PASO 2: VERIFICAR VARIABLES CRÍTICAS
 const requiredVars = ['MicrosoftAppId', 'MicrosoftAppPassword'];
 const missingVars = requiredVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
-    console.error('❌ Variables de entorno críticas faltantes:');
+    console.error('❌ Variables críticas faltantes:');
     missingVars.forEach(varName => console.error(`   ${varName}`));
     process.exit(1);
 }
 
-// ✅ ADVERTENCIA: Tenant ID recomendado
-if (!process.env.MicrosoftAppTenantId) {
-    console.warn('⚠️ MicrosoftAppTenantId no configurado - puede causar errores de autenticación');
-    console.warn('   Agrega MicrosoftAppTenantId a tu archivo .env');
-    console.warn('   Esto resuelve errores AADSTS700016');
+// ✅ PASO 3: VALIDAR TENANT ID CRÍTICO
+if (!tenantId) {
+    console.error('\n🚨 ERROR CRÍTICO: MicrosoftAppTenantId FALTANTE');
+    console.error('Este es el problema que causa AADSTS700016');
+    console.error('\n📋 PASOS PARA SOLUCIONARLO:');
+    console.error('1. Ve a: https://portal.azure.com');
+    console.error('2. Azure Active Directory > Properties');
+    console.error('3. Copia el "Tenant ID" (Directory ID)');
+    console.error('4. Agrega a .env: MicrosoftAppTenantId=tu-tenant-id');
+    console.error('5. Reinicia el bot: npm start');
+    console.error('\n⚠️ El bot NO funcionará sin Tenant ID');
+    process.exit(1);
 }
 
-// Crear servidor HTTP
+// ✅ PASO 4: CREAR SERVIDOR
 const server = restify.createServer();
 server.use(restify.plugins.bodyParser());
 
 server.listen(process.env.port || process.env.PORT || 3978, () => {
     console.log(`\n${server.name} listening on ${server.url}`);
-    console.log('\n🚀 Bot Nova con Cosmos DB iniciado');
-    console.log('✅ Sistema de login personalizado activo');
+    console.log('✅ Bot Nova iniciado con configuración Azure AD correcta');
     console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Memoria temporal'}`);
 });
 
-// ✅ SOLUCION SIMPLE: Configurar adaptador con variables de entorno directas
-// El Bot Framework Adapter leerá automáticamente MicrosoftAppTenantId del entorno
+// ✅ PASO 5: CONFIGURAR ADAPTER CON TENANT ID EXPLÍCITO
+console.log('\n🔐 Configurando Bot Framework Adapter...');
+
+// SOLUCIÓN ESPECÍFICA PARA AADSTS700016
 const adapter = new BotFrameworkAdapter({
-    appId: process.env.MicrosoftAppId,
-    appPassword: process.env.MicrosoftAppPassword
-    // ✅ NOTA: No necesitamos configuración adicional
-    // El Bot Framework automáticamente usa MicrosoftAppTenantId si está disponible
+    appId: appId,
+    appPassword: appPassword,
+    // ✅ CRITICAL FIX: Incluir channelAuthTenant explícitamente
+    channelAuthTenant: tenantId,
+    // ✅ ADDITIONAL FIX: Configurar authority explícitamente
+    oAuthEndpoint: `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+    openIdMetadata: `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`
 });
 
-// ✅ LOG: Mostrar configuración
-console.log('🔐 Configuración Bot Framework:');
-console.log(`   App ID: ${process.env.MicrosoftAppId ? '✅ Configurado' : '❌ FALTANTE'}`);
-console.log(`   App Password: ${process.env.MicrosoftAppPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
-console.log(`   Tenant ID: ${process.env.MicrosoftAppTenantId ? '✅ Configurado' : '⚠️ NO CONFIGURADO'}`);
+console.log('✅ Adapter configurado con:');
+console.log(`   App ID: ${appId}`);
+console.log(`   Tenant ID: ${tenantId}`);
+console.log(`   Channel Auth Tenant: ${tenantId}`);
+console.log(`   OAuth Endpoint: https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`);
 
-if (process.env.MicrosoftAppTenantId) {
-    console.log(`   Tenant: ${process.env.MicrosoftAppTenantId}`);
-    console.log('   🎯 Esto debería resolver errores AADSTS700016');
-} else {
-    console.log('   ⚠️ Sin Tenant ID pueden ocurrir errores AADSTS700016');
-}
-
-// ✅ MEJORADO: Manejo de errores del adaptador con diagnóstico
+// ✅ PASO 6: MANEJO DE ERRORES MEJORADO CON DIAGNÓSTICO ESPECÍFICO
 adapter.onTurnError = async (context, error) => {
-    console.error('❌ Error en bot:', error);
+    console.error('\n❌ ===== ERROR BOT FRAMEWORK =====');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
     
-    // ✅ DIAGNÓSTICO: Errores específicos de autenticación
+    // ✅ DIAGNÓSTICO ESPECÍFICO PARA ERRORES AZURE AD
     if (error.message && error.message.includes('AADSTS')) {
-        console.error('\n🔐 ERROR DE AUTENTICACIÓN AZURE AD DETECTADO:');
+        console.error('\n🔐 ERROR DE AZURE AD DETECTADO:');
         console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
         
         if (error.message.includes('AADSTS700016')) {
-            console.error('📋 ERROR AADSTS700016 - Aplicación no encontrada');
-            console.error('   Posibles causas:');
-            console.error('   • Tenant ID incorrecto o faltante');
-            console.error('   • App no registrada en el tenant correcto'); 
-            console.error('   • Permisos insuficientes en Azure AD');
-            console.error('\n   ✅ SOLUCIÓN:');
-            console.error('   1. Obtén tu Tenant ID: Azure Portal > Azure AD > Properties');
-            console.error('   2. Agrégalo a .env: MicrosoftAppTenantId=tu-tenant-id');
-            console.error('   3. Reinicia el bot');
+            console.error('📋 ERROR AADSTS700016 - ANÁLISIS DETALLADO:');
+            console.error(`   App ID en error: dcd9ce45-96c3-43ad-986c-c7e063d0651e`);
+            console.error(`   App ID configurado: ${appId}`);
+            console.error(`   Tenant configurado: ${tenantId}`);
+            console.error('\n🔍 POSIBLES CAUSAS:');
+            console.error('   1. App no registrada en este Tenant');
+            console.error('   2. App registrada en otro Tenant');
+            console.error('   3. App eliminada o deshabilitada');
+            console.error('   4. Permisos de consentimiento faltantes');
+            
+            console.error('\n✅ PASOS PARA RESOLVER:');
+            console.error('   1. Verifica que el App ID existe en Azure Portal');
+            console.error('   2. Ve a: App Registrations en Azure AD');
+            console.error('   3. Busca tu aplicación por el App ID');
+            console.error('   4. Si no existe, créala nuevamente');
+            console.error('   5. Asegúrate de que esté en el Tenant correcto');
+            console.error('   6. Otorga permisos necesarios para Bot Framework');
+            
         } else if (error.message.includes('AADSTS50020')) {
             console.error('📋 ERROR AADSTS50020 - Usuario no existe en tenant');
-            console.error('   • Verifica que uses el tenant correcto');
+            console.error('   Verifica que uses el tenant correcto');
         } else if (error.message.includes('AADSTS90002')) {
             console.error('📋 ERROR AADSTS90002 - Tenant no encontrado');
-            console.error('   • Verifica que el Tenant ID sea válido');
+            console.error('   Verifica que el Tenant ID sea válido');
         }
         
-        console.error(`\n   📊 Configuración actual:`);
-        console.error(`   • App ID: ${process.env.MicrosoftAppId?.substring(0,8)}...`);
-        console.error(`   • Tenant: ${process.env.MicrosoftAppTenantId || 'NO CONFIGURADO ❌'}`);
         console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+        
+        // ✅ GENERAR REPORTE DE DIAGNÓSTICO
+        await generateDiagnosticReport();
     }
     
-    await context.sendActivity('❌ **Error del bot**\n\nOcurrió un error inesperado. Intenta nuevamente.');
+    // Responder al usuario
+    try {
+        await context.sendActivity(
+            '❌ **Error de autenticación del bot**\n\n' +
+            'Hay un problema con la configuración de Azure AD. ' +
+            'Por favor contacta al administrador del sistema.\n\n' +
+            '**Error técnico**: AADSTS700016 - Aplicación no encontrada en el directorio.'
+        );
+    } catch (sendError) {
+        console.error('Error enviando mensaje de error:', sendError);
+    }
     
     // Limpiar estados en caso de error
     try {
@@ -116,7 +161,50 @@ adapter.onTurnError = async (context, error) => {
     }
 };
 
-// Inicializar almacenamiento
+// ✅ PASO 7: FUNCIÓN DE DIAGNÓSTICO COMPLETO
+async function generateDiagnosticReport() {
+    console.log('\n📊 ===== REPORTE DE DIAGNÓSTICO AZURE AD =====');
+    
+    const report = {
+        timestamp: new Date().toISOString(),
+        configuration: {
+            appId: appId,
+            hasAppPassword: !!appPassword,
+            tenantId: tenantId,
+            nodeVersion: process.version,
+            environment: process.env.NODE_ENV || 'development'
+        },
+        endpoints: {
+            oauthEndpoint: `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+            openIdMetadata: `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`,
+            azurePortalApp: `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/`
+        },
+        recommendations: [
+            'Verifica que la aplicación existe en Azure Portal',
+            'Confirma que el Tenant ID es correcto',
+            'Asegúrate de que la app tiene permisos de Bot Framework',
+            'Verifica que no haya sido eliminada la aplicación'
+        ]
+    };
+    
+    console.log('📋 Configuración actual:');
+    console.log(JSON.stringify(report.configuration, null, 2));
+    
+    console.log('\n🔗 Enlaces útiles:');
+    console.log(`   Azure Portal App: ${report.endpoints.azurePortalApp}`);
+    console.log(`   OAuth Endpoint: ${report.endpoints.oauthEndpoint}`);
+    
+    console.log('\n📝 Recomendaciones:');
+    report.recommendations.forEach((rec, index) => {
+        console.log(`   ${index + 1}. ${rec}`);
+    });
+    
+    console.log('════════════════════════════════════════════════\n');
+    
+    return report;
+}
+
+// ✅ PASO 8: INICIALIZAR ALMACENAMIENTO
 let storage;
 let conversationState;
 let userState;
@@ -157,7 +245,7 @@ async function initializeStorage() {
     }
 }
 
-// Inicialización async del storage
+// ✅ PASO 9: INICIALIZACIÓN ASYNC DEL STORAGE
 initializeStorage().then(() => {
     const bot = new TeamsBot(conversationState, userState);
     
@@ -166,7 +254,14 @@ initializeStorage().then(() => {
             await adapter.process(req, res, (context) => bot.run(context));
         } catch (error) {
             console.error('❌ Error procesando mensaje:', error);
-            res.status(500).send('Error interno del servidor');
+            
+            // Log adicional para errores de autenticación
+            if (error.message && error.message.includes('AADSTS')) {
+                console.error('🔐 Error de Azure AD en procesamiento de mensaje');
+                await generateDiagnosticReport();
+            }
+            
+            res.status(500).send('Error interno del servidor - Ver logs para diagnóstico detallado');
         }
     });
     
@@ -177,7 +272,7 @@ initializeStorage().then(() => {
     process.exit(1);
 });
 
-// ✅ ENDPOINT: Salud con información de configuración
+// ✅ PASO 10: ENDPOINTS DE DIAGNÓSTICO MEJORADOS
 server.get('/health', (req, res, next) => {
     try {
         const cosmosInfo = cosmosService.getConfigInfo();
@@ -186,17 +281,23 @@ server.get('/health', (req, res, next) => {
         res.json({
             status: 'OK',
             timestamp: new Date().toISOString(),
-            bot: 'Nova Bot con Cosmos DB y Azure Search',
-            configuration: {
-                appId: process.env.MicrosoftAppId ? 'Configurado' : 'Faltante',
-                appPassword: process.env.MicrosoftAppPassword ? 'Configurado' : 'Faltante',
-                tenantId: process.env.MicrosoftAppTenantId ? 'Configurado' : 'NO CONFIGURADO ⚠️',
-                tenantValue: process.env.MicrosoftAppTenantId || 'none'
+            bot: 'Nova Bot con Diagnóstico Azure AD',
+            azureAdConfig: {
+                appId: appId ? 'Configurado' : 'Faltante',
+                appPassword: appPassword ? 'Configurado' : 'Faltante',
+                tenantId: tenantId ? 'Configurado' : 'FALTANTE - CRÍTICO',
+                tenantValue: tenantId || 'none',
+                channelAuthTenant: tenantId ? 'Configurado' : 'FALTANTE',
+                oauthEndpoint: tenantId ? `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token` : 'No configurado'
+            },
+            diagnosticUrls: {
+                azurePortalApp: appId ? `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/` : 'No disponible',
+                azureTenant: tenantId ? `https://portal.azure.com/#blade/Microsoft_AAD_IAM/ActiveDirectoryMenuBlade/Properties/directoryId/${tenantId}` : 'No disponible'
             },
             features: {
                 customLogin: true,
                 oauth: false,
-                azure: false,
+                azure: true,
                 openai: !!process.env.OPENAI_API_KEY,
                 cosmosDB: cosmosInfo.available,
                 azureSearch: documentInfo.searchAvailable,
@@ -225,7 +326,18 @@ server.get('/health', (req, res, next) => {
     }
 });
 
-// ✅ ENDPOINT: Diagnóstico completo
+// ✅ NUEVO: ENDPOINT DE DIAGNÓSTICO AZURE AD ESPECÍFICO
+server.get('/azure-diagnostic', async (req, res) => {
+    try {
+        const diagnosticReport = await generateDiagnosticReport();
+        res.json(diagnosticReport);
+    } catch (error) {
+        console.error('❌ Error en endpoint /azure-diagnostic:', error);
+        res.status(500).json({ error: 'Error generating diagnostic report' });
+    }
+});
+
+// ✅ ENDPOINT: Diagnóstico completo (mantener el existente)
 server.get('/diagnostic', async (req, res) => {
     try {
         let cosmosStats = null;
@@ -252,6 +364,14 @@ server.get('/diagnostic', async (req, res) => {
                 authenticatedUsers: global.botInstance?.getStats?.()?.authenticatedUsers || 0,
                 timestamp: new Date().toISOString()
             },
+            azureAD: {
+                configured: !!tenantId,
+                appId: appId,
+                tenantId: tenantId,
+                hasPassword: !!appPassword,
+                oauthEndpoint: tenantId ? `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token` : null,
+                portalUrl: appId ? `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/` : null
+            },
             memory: {
                 used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
                 total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
@@ -268,8 +388,8 @@ server.get('/diagnostic', async (req, res) => {
             botFramework: {
                 appId: process.env.MicrosoftAppId ? 'Configurado' : 'Faltante',
                 appPassword: process.env.MicrosoftAppPassword ? 'Configurado' : 'Faltante',
-                tenantId: process.env.MicrosoftAppTenantId ? 'Configurado' : 'Faltante',
-                tenantValue: process.env.MicrosoftAppTenantId || 'No configurado'
+                tenantId: process.env.MicrosoftAppTenantId ? 'Configurado' : 'FALTANTE - CAUSA AADSTS700016',
+                tenantValue: process.env.MicrosoftAppTenantId || 'No configurado - CRÍTICO'
             },
             storage: {
                 type: cosmosService.isAvailable() ? 'CosmosDB' : 'Memory',
@@ -288,7 +408,7 @@ server.get('/diagnostic', async (req, res) => {
     }
 });
 
-// ✅ ENDPOINT: Stats de Cosmos DB
+// Mantener todos los otros endpoints existentes...
 server.get('/cosmos-stats', async (req, res) => {
     try {
         if (!cosmosService.isAvailable()) {
@@ -313,7 +433,7 @@ server.get('/cosmos-stats', async (req, res) => {
     }
 });
 
-// ✅ DESARROLLO: Endpoint de limpieza (solo en desarrollo)
+// Endpoint de limpieza para desarrollo
 if (process.env.NODE_ENV === 'development') {
     server.post('/dev/cleanup', async (req, res) => {
         try {
@@ -364,85 +484,54 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// ✅ INFORMACIÓN DE CONFIGURACIÓN COMPLETA
+// ✅ INFORMACIÓN FINAL CON DIAGNÓSTICO AZURE AD
 console.log('\n═══════════════════════════════════════');
-console.log('📋 CONFIGURACIÓN NOVA BOT');
+console.log('📋 CONFIGURACIÓN NOVA BOT - DIAGNÓSTICO COMPLETO');
 console.log('═══════════════════════════════════════');
-console.log('🔐 Login: Tarjeta personalizada con usuario/contraseña');
+
+console.log('🔐 Azure AD Bot Framework:');
+console.log(`   App ID: ${appId ? '✅ Configurado' : '❌ FALTANTE'}`);
+console.log(`   App Password: ${appPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
+console.log(`   Tenant ID: ${tenantId ? '✅ Configurado' : '❌ FALTANTE - CAUSA AADSTS700016'}`);
+console.log(`   Channel Auth Tenant: ${tenantId ? '✅ Configurado' : '❌ FALTANTE'}`);
+
+if (appId) {
+    console.log(`   Azure Portal: https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/`);
+}
+
+console.log('🤖 Login: Tarjeta personalizada con usuario/contraseña');
 console.log('🌐 API Nova: https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login');
 console.log('🤖 OpenAI: ' + (process.env.OPENAI_API_KEY ? '✅ Configurado' : '❌ No configurado'));
 
-// Bot Framework info
-console.log('🔐 Bot Framework:');
-console.log(`   App ID: ${process.env.MicrosoftAppId ? '✅ Configurado' : '❌ FALTANTE'}`);
-console.log(`   App Password: ${process.env.MicrosoftAppPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
-console.log(`   Tenant ID: ${process.env.MicrosoftAppTenantId ? '✅ Configurado' : '⚠️ NO CONFIGURADO'}`);
-
-if (process.env.MicrosoftAppTenantId) {
-    console.log(`   Tenant: ${process.env.MicrosoftAppTenantId}`);
-} else {
-    console.log('   ⚠️ ADVERTENCIA: Sin Tenant ID pueden ocurrir errores AADSTS700016');
-}
-
-// Información de Cosmos DB
+// Información de servicios
 if (process.env.COSMOS_DB_ENDPOINT) {
     console.log('💾 Cosmos DB: ✅ Configurado');
-    console.log(`   Database: ${process.env.COSMOS_DB_DATABASE_ID || 'No especificado'}`);
-    console.log(`   Container: ${process.env.COSMOS_DB_CONTAINER_ID || 'No especificado'}`);
     console.log(`   Estado: ${cosmosService.isAvailable() ? '🟢 Disponible' : '🔴 Error de conexión'}`);
 } else {
     console.log('💾 Cosmos DB: ❌ No configurado (usando MemoryStorage)');
 }
 
-// Información de Azure Search
 const searchEndpoint = process.env.AZURE_SEARCH_ENDPOINT || process.env.SERVICE_ENDPOINT;
 if (searchEndpoint) {
     console.log('🔍 Azure Search: ✅ Configurado');
-    console.log(`   Endpoint: ${searchEndpoint}`);
-    console.log(`   Index: ${process.env.AZURE_SEARCH_INDEX_NAME || process.env.INDEX_NAME || 'alfa_bot'}`);
     console.log(`   Estado: ${documentService.isAvailable() ? '🟢 Disponible' : '🔴 Error de conexión'}`);
-    
-    if (documentService.isAvailable()) {
-        const features = documentService.getConfigInfo().features;
-        console.log(`   Búsqueda vectorial: ${features.vectorSearch ? '✅ Activa' : '⚠️ Solo texto'}`);
-    }
 } else {
-    console.log('🔍 Azure Search: ❌ No configurado (búsqueda de documentos no disponible)');
+    console.log('🔍 Azure Search: ❌ No configurado');
 }
 
-console.log('📊 Herramientas disponibles:');
-console.log('   • Consulta de tasas de interés Nova');
-console.log('   • Información de usuario completa');
-console.log('   • APIs Nova con token de usuario');
-console.log('   • Resumen de conversaciones');
-if (documentService.isAvailable()) {
-    console.log('   • Búsqueda de documentos corporativos');
-    console.log('   • Consulta de políticas empresariales');
-    console.log('   • Calendario de días feriados');
-}
+console.log('📊 Endpoints disponibles:');
+console.log('   GET /health - Estado general');
+console.log('   GET /diagnostic - Diagnóstico completo');
+console.log('   GET /azure-diagnostic - Diagnóstico específico Azure AD');
+console.log('   GET /cosmos-stats - Estadísticas Cosmos DB');
+
 console.log('═══════════════════════════════════════');
 
-// ✅ VALIDACIÓN FINAL: Advertencias críticas
-const criticalMissing = [];
-if (!process.env.MicrosoftAppId) criticalMissing.push('MicrosoftAppId');
-if (!process.env.MicrosoftAppPassword) criticalMissing.push('MicrosoftAppPassword');
-
-if (criticalMissing.length > 0) {
-    console.error('\n🚨 CONFIGURACIÓN CRÍTICA FALTANTE:');
-    criticalMissing.forEach(varName => console.error(`   ❌ ${varName}`));
-    console.error('\n   El bot NO funcionará sin estas variables.\n');
-}
-
-if (!process.env.MicrosoftAppTenantId) {
-    console.warn('\n⚠️  TENANT ID NO CONFIGURADO:');
-    console.warn('   Esto puede causar errores AADSTS700016');
-    console.warn('   Agrega MicrosoftAppTenantId a tu .env');
-    console.warn('   Obtén el Tenant ID desde Azure Portal > Azure AD > Properties\n');
-    console.warn('✅ SOLUCIÓN RÁPIDA:');
-    console.warn('   1. Ve a: https://portal.azure.com');
-    console.warn('   2. Azure Active Directory > Properties > Tenant ID');
-    console.warn('   3. Agrega a .env: MicrosoftAppTenantId=tu-tenant-id');
-    console.warn('   4. Reinicia: npm start\n');
+// ✅ VALIDACIÓN FINAL CRÍTICA
+if (!tenantId) {
+    console.error('\n🚨 CONFIGURACIÓN INCOMPLETA - BOT NO FUNCIONARÁ');
+    console.error('El error AADSTS700016 seguirá ocurriendo sin MicrosoftAppTenantId');
+    console.error('Agrega el Tenant ID al archivo .env y reinicia el bot');
 } else {
-    console.log('\n✅ CONFIGURACIÓN COMPLETA - Bot listo para funcionar\n');
+    console.log('\n✅ CONFIGURACIÓN AZURE AD COMPLETA - Bot listo para funcionar\n');
 }

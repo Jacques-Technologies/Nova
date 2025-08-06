@@ -185,16 +185,8 @@ class CosmosSetup {
 
     async getStats() {
     try {
-        if (!this.cosmosAvailable) {
-            return {
-                available: false,
-                error: this.initializationError
-            };
-        }
+        console.log('📊 Obteniendo estadísticas de Cosmos DB...');
 
-        console.log('📊 Obteniendo estadísticas de Cosmos DB (corregido)...');
-
-        // ✅ ESTADÍSTICAS BÁSICAS CON QUERIES SEPARADAS
         const statsResults = {
             totalDocuments: 0,
             conversations: 0,
@@ -203,175 +195,83 @@ class CosmosSetup {
             systemMessages: 0
         };
 
-        // ✅ Query 1: Total de documentos
-        try {
-            const totalQuery = {
-                query: "SELECT VALUE COUNT(1) FROM c"
-            };
-            
-            const { resources: totalResults } = await this.container.items
-                .query(totalQuery)
-                .fetchAll();
-                
-            statsResults.totalDocuments = totalResults[0] || 0;
-            console.log(`📊 Total documentos: ${statsResults.totalDocuments}`);
-            
-        } catch (error) {
-            console.warn('⚠️ Error contando documentos totales:', error.message);
-        }
-
-        // ✅ Query 2: Documentos de conversación
-        try {
-            const conversationQuery = {
+        const queries = [
+            {
+                label: 'totalDocuments',
+                query: 'SELECT VALUE COUNT(1) FROM c'
+            },
+            {
+                label: 'conversations',
                 query: "SELECT VALUE COUNT(1) FROM c WHERE c.documentType = 'conversation_info'"
-            };
-            
-            const { resources: conversationResults } = await this.container.items
-                .query(conversationQuery)
-                .fetchAll();
-                
-            statsResults.conversations = conversationResults[0] || 0;
-            console.log(`📊 Conversaciones: ${statsResults.conversations}`);
-            
-        } catch (error) {
-            console.warn('⚠️ Error contando conversaciones:', error.message);
-        }
-
-        // ✅ Query 3: Mensajes de usuario
-        try {
-            const userMessageQuery = {
+            },
+            {
+                label: 'userMessages',
                 query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'user'"
-            };
-            
-            const { resources: userResults } = await this.container.items
-                .query(userMessageQuery)
-                .fetchAll();
-                
-            statsResults.userMessages = userResults[0] || 0;
-            console.log(`📊 Mensajes usuario: ${statsResults.userMessages}`);
-            
-        } catch (error) {
-            console.warn('⚠️ Error contando mensajes de usuario:', error.message);
-        }
-
-        // ✅ Query 4: Mensajes del bot
-        try {
-            const botMessageQuery = {
+            },
+            {
+                label: 'botMessages',
                 query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'bot'"
-            };
-            
-            const { resources: botResults } = await this.container.items
-                .query(botMessageQuery)
-                .fetchAll();
-                
-            statsResults.botMessages = botResults[0] || 0;
-            console.log(`📊 Mensajes bot: ${statsResults.botMessages}`);
-            
-        } catch (error) {
-            console.warn('⚠️ Error contando mensajes del bot:', error.message);
-        }
-
-        // ✅ Query 5: Mensajes del sistema
-        try {
-            const systemMessageQuery = {
+            },
+            {
+                label: 'systemMessages',
                 query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'system'"
-            };
-            
-            const { resources: systemResults } = await this.container.items
-                .query(systemMessageQuery)
-                .fetchAll();
-                
-            statsResults.systemMessages = systemResults[0] || 0;
-            console.log(`📊 Mensajes sistema: ${statsResults.systemMessages}`);
-            
-        } catch (error) {
-            console.warn('⚠️ Error contando mensajes del sistema:', error.message);
+            }
+        ];
+
+        for (const q of queries) {
+            try {
+                console.log(`⏳ Ejecutando query: ${q.label}`);
+                const { resources } = await this.container.items
+                    .query({ query: q.query })
+                    .fetchAll();
+                statsResults[q.label] = resources[0] || 0;
+                console.log(`✅ ${q.label}: ${statsResults[q.label]}`);
+            } catch (error) {
+                console.warn(`⚠️ Error ejecutando query "${q.label}":`, error.message);
+                statsResults[q.label] = 'ERROR';
+            }
         }
 
-        // ✅ ESTADÍSTICAS ADICIONALES (OPCIONAL)
+        // Consulta adicional: Última actividad
         let recentActivity = null;
         try {
             const recentQuery = {
-                query: "SELECT TOP 1 c.timestamp FROM c WHERE c.messageType != null ORDER BY c.timestamp DESC"
+                query: "SELECT TOP 1 c.timestamp FROM c WHERE IS_DEFINED(c.messageType) ORDER BY c.timestamp DESC"
             };
-            
+
+            console.log("⏳ Buscando actividad reciente...");
             const { resources: recentResults } = await this.container.items
                 .query(recentQuery)
                 .fetchAll();
-                
+
             if (recentResults.length > 0) {
                 recentActivity = recentResults[0].timestamp;
+                console.log(`📅 Última actividad: ${recentActivity}`);
             }
-            
         } catch (error) {
             console.warn('⚠️ Error obteniendo actividad reciente:', error.message);
         }
 
-        console.log('✅ Estadísticas de Cosmos DB obtenidas exitosamente');
-        console.log('📊 Resumen:', {
-            total: statsResults.totalDocuments,
-            conversaciones: statsResults.conversations,
-            mensajesUsuario: statsResults.userMessages,
-            mensajesBot: statsResults.botMessages
-        });
-
         return {
             available: true,
-            initialized: this.initialized,
+            initialized: true,
             database: this.databaseId,
             container: this.containerId,
             partitionKey: this.partitionKey,
             stats: {
-                totalDocuments: statsResults.totalDocuments,
-                conversations: statsResults.conversations,
-                userMessages: statsResults.userMessages,
-                botMessages: statsResults.botMessages,
-                systemMessages: statsResults.systemMessages,
-                totalMessages: statsResults.userMessages + statsResults.botMessages + statsResults.systemMessages,
-                recentActivity: recentActivity
+                ...statsResults,
+                totalMessages:
+                    (typeof statsResults.userMessages === 'number' ? statsResults.userMessages : 0) +
+                    (typeof statsResults.botMessages === 'number' ? statsResults.botMessages : 0) +
+                    (typeof statsResults.systemMessages === 'number' ? statsResults.systemMessages : 0),
+                recentActivity
             },
             timestamp: new Date().toISOString(),
-            note: 'Estadísticas obtenidas con queries separadas (compatible con Cosmos DB SQL)'
+            note: 'Consultas compatibles con Cosmos DB (sin CASE)'
         };
 
     } catch (error) {
-        console.error('❌ Error obteniendo estadísticas de Cosmos DB:', error);
-        
-        // ✅ ERROR ESPECÍFICO PARA SINTAXIS
-        if (error.message && error.message.includes('Syntax error')) {
-            console.error('🔧 Error de sintaxis SQL - Usando método de fallback básico');
-            
-            // Fallback: solo contar documentos totales
-            try {
-                const fallbackQuery = {
-                    query: "SELECT VALUE COUNT(1) FROM c"
-                };
-                
-                const { resources: fallbackResults } = await this.container.items
-                    .query(fallbackQuery)
-                    .fetchAll();
-                
-                return {
-                    available: true,
-                    initialized: this.initialized,
-                    database: this.databaseId,
-                    container: this.containerId,
-                    partitionKey: this.partitionKey,
-                    stats: {
-                        totalDocuments: fallbackResults[0] || 0,
-                        conversations: 'N/A - Query compleja falló',
-                        userMessages: 'N/A - Query compleja falló',
-                        botMessages: 'N/A - Query compleja falló',
-                        note: 'Fallback mode - Solo total de documentos disponible'
-                    },
-                    timestamp: new Date().toISOString(),
-                    warning: 'Usando modo de fallback por error de sintaxis SQL'
-                };
-                
-            } catch (fallbackError) {
-                console.error('❌ Incluso el fallback falló:', fallbackError.message);
-            }
-        }
+        console.error('❌ Error inesperado al obtener estadísticas:', error.message);
 
         return {
             available: false,
@@ -380,6 +280,7 @@ class CosmosSetup {
         };
     }
 }
+
 
     async run() {
         console.log('🚀 ===== CONFIGURACIÓN COSMOS DB =====');

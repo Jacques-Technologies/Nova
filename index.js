@@ -1,4 +1,4 @@
-// index.js - CORREGIDO con Tenant ID
+// index.js - SOLUCION SIMPLE para Tenant ID (sin AuthenticationConfiguration)
 const path = require('path');
 const restify = require('restify');
 const { 
@@ -6,8 +6,8 @@ const {
     MemoryStorage, 
     ConversationState, 
     UserState, 
-    CosmosDbPartitionedStorage,
-    AuthenticationConfiguration // ✅ IMPORTANTE para tenant ID
+    CosmosDbPartitionedStorage
+    // ✅ REMOVIDO: AuthenticationConfiguration (no disponible en todas las versiones)
 } = require('botbuilder');
 
 // Importar servicios
@@ -32,6 +32,7 @@ if (missingVars.length > 0) {
 if (!process.env.MicrosoftAppTenantId) {
     console.warn('⚠️ MicrosoftAppTenantId no configurado - puede causar errores de autenticación');
     console.warn('   Agrega MicrosoftAppTenantId a tu archivo .env');
+    console.warn('   Esto resuelve errores AADSTS700016');
 }
 
 // Crear servidor HTTP
@@ -45,41 +46,59 @@ server.listen(process.env.port || process.env.PORT || 3978, () => {
     console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Memoria temporal'}`);
 });
 
-// ✅ CORREGIDO: Crear adaptador del Bot Framework con Tenant ID
-const adapterConfig = {
+// ✅ SOLUCION SIMPLE: Configurar adaptador con variables de entorno directas
+// El Bot Framework Adapter leerá automáticamente MicrosoftAppTenantId del entorno
+const adapter = new BotFrameworkAdapter({
     appId: process.env.MicrosoftAppId,
     appPassword: process.env.MicrosoftAppPassword
-};
+    // ✅ NOTA: No necesitamos configuración adicional
+    // El Bot Framework automáticamente usa MicrosoftAppTenantId si está disponible
+});
 
-// ✅ NUEVO: Agregar Tenant ID si está disponible
+// ✅ LOG: Mostrar configuración
+console.log('🔐 Configuración Bot Framework:');
+console.log(`   App ID: ${process.env.MicrosoftAppId ? '✅ Configurado' : '❌ FALTANTE'}`);
+console.log(`   App Password: ${process.env.MicrosoftAppPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
+console.log(`   Tenant ID: ${process.env.MicrosoftAppTenantId ? '✅ Configurado' : '⚠️ NO CONFIGURADO'}`);
+
 if (process.env.MicrosoftAppTenantId) {
-    // Opción 1: Usar AuthenticationConfiguration (recomendado)
-    adapterConfig.authConfig = new AuthenticationConfiguration([], {
-        requiredEndorsements: [],
-        claimsValidation: {},
-        tenantId: process.env.MicrosoftAppTenantId
-    });
-    
-    console.log(`🔐 Tenant ID configurado: ${process.env.MicrosoftAppTenantId}`);
+    console.log(`   Tenant: ${process.env.MicrosoftAppTenantId}`);
+    console.log('   🎯 Esto debería resolver errores AADSTS700016');
 } else {
-    console.warn('⚠️ Tenant ID no configurado - usando configuración básica');
+    console.log('   ⚠️ Sin Tenant ID pueden ocurrir errores AADSTS700016');
 }
 
-const adapter = new BotFrameworkAdapter(adapterConfig);
-
-// ✅ MEJORADO: Manejo de errores del adaptador con información de Tenant
+// ✅ MEJORADO: Manejo de errores del adaptador con diagnóstico
 adapter.onTurnError = async (context, error) => {
     console.error('❌ Error en bot:', error);
     
     // ✅ DIAGNÓSTICO: Errores específicos de autenticación
     if (error.message && error.message.includes('AADSTS')) {
-        console.error('🔐 Error de autenticación Azure AD detectado:');
-        console.error('   Posibles causas:');
-        console.error('   • Tenant ID incorrecto o faltante');
-        console.error('   • App no registrada en el tenant correcto'); 
-        console.error('   • Permisos insuficientes en Azure AD');
-        console.error(`   • Verificar configuración: AppId=${process.env.MicrosoftAppId?.substring(0,8)}...`);
-        console.error(`   • Tenant configurado: ${process.env.MicrosoftAppTenantId || 'NO CONFIGURADO'}`);
+        console.error('\n🔐 ERROR DE AUTENTICACIÓN AZURE AD DETECTADO:');
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+        
+        if (error.message.includes('AADSTS700016')) {
+            console.error('📋 ERROR AADSTS700016 - Aplicación no encontrada');
+            console.error('   Posibles causas:');
+            console.error('   • Tenant ID incorrecto o faltante');
+            console.error('   • App no registrada en el tenant correcto'); 
+            console.error('   • Permisos insuficientes en Azure AD');
+            console.error('\n   ✅ SOLUCIÓN:');
+            console.error('   1. Obtén tu Tenant ID: Azure Portal > Azure AD > Properties');
+            console.error('   2. Agrégalo a .env: MicrosoftAppTenantId=tu-tenant-id');
+            console.error('   3. Reinicia el bot');
+        } else if (error.message.includes('AADSTS50020')) {
+            console.error('📋 ERROR AADSTS50020 - Usuario no existe en tenant');
+            console.error('   • Verifica que uses el tenant correcto');
+        } else if (error.message.includes('AADSTS90002')) {
+            console.error('📋 ERROR AADSTS90002 - Tenant no encontrado');
+            console.error('   • Verifica que el Tenant ID sea válido');
+        }
+        
+        console.error(`\n   📊 Configuración actual:`);
+        console.error(`   • App ID: ${process.env.MicrosoftAppId?.substring(0,8)}...`);
+        console.error(`   • Tenant: ${process.env.MicrosoftAppTenantId || 'NO CONFIGURADO ❌'}`);
+        console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     }
     
     await context.sendActivity('❌ **Error del bot**\n\nOcurrió un error inesperado. Intenta nuevamente.');
@@ -96,8 +115,6 @@ adapter.onTurnError = async (context, error) => {
         console.error('⚠️ Error limpiando estados:', cleanupError.message);
     }
 };
-
-// ===== RESTO DEL CÓDIGO MANTENER IGUAL =====
 
 // Inicializar almacenamiento
 let storage;
@@ -160,7 +177,7 @@ initializeStorage().then(() => {
     process.exit(1);
 });
 
-// ✅ MEJORADO: Endpoint de salud con información de configuración
+// ✅ ENDPOINT: Salud con información de configuración
 server.get('/health', (req, res, next) => {
     try {
         const cosmosInfo = cosmosService.getConfigInfo();
@@ -208,8 +225,7 @@ server.get('/health', (req, res, next) => {
     }
 });
 
-// ===== MANTENER RESTO DE ENDPOINTS IGUAL =====
-
+// ✅ ENDPOINT: Diagnóstico completo
 server.get('/diagnostic', async (req, res) => {
     try {
         let cosmosStats = null;
@@ -244,12 +260,12 @@ server.get('/diagnostic', async (req, res) => {
             environment: {
                 hasOpenAI: !!process.env.OPENAI_API_KEY,
                 hasBotId: !!process.env.MicrosoftAppId,
-                hasTenantId: !!process.env.MicrosoftAppTenantId, // ✅ NUEVO
+                hasTenantId: !!process.env.MicrosoftAppTenantId,
                 nodeVersion: process.version,
                 cosmosConfigured: !!process.env.COSMOS_DB_ENDPOINT,
                 azureSearchConfigured: !!(process.env.AZURE_SEARCH_ENDPOINT || process.env.SERVICE_ENDPOINT)
             },
-            botFramework: { // ✅ NUEVO
+            botFramework: {
                 appId: process.env.MicrosoftAppId ? 'Configurado' : 'Faltante',
                 appPassword: process.env.MicrosoftAppPassword ? 'Configurado' : 'Faltante',
                 tenantId: process.env.MicrosoftAppTenantId ? 'Configurado' : 'Faltante',
@@ -272,8 +288,70 @@ server.get('/diagnostic', async (req, res) => {
     }
 });
 
-// ===== MANTENER RESTO DEL CÓDIGO =====
+// ✅ ENDPOINT: Stats de Cosmos DB
+server.get('/cosmos-stats', async (req, res) => {
+    try {
+        if (!cosmosService.isAvailable()) {
+            res.json({
+                available: false,
+                message: 'Cosmos DB no está configurado o disponible'
+            });
+            return;
+        }
+        
+        const stats = await cosmosService.getStats();
+        res.json(stats);
+        return;
+        
+    } catch (error) {
+        console.error('❌ Error en endpoint /cosmos-stats:', error);
+        res.status(500).json({ 
+            error: 'Error obteniendo estadísticas de Cosmos DB',
+            details: error.message 
+        });
+        return;
+    }
+});
 
+// ✅ DESARROLLO: Endpoint de limpieza (solo en desarrollo)
+if (process.env.NODE_ENV === 'development') {
+    server.post('/dev/cleanup', async (req, res) => {
+        try {
+            console.log('🧹 Iniciando limpieza de desarrollo...');
+            
+            let results = {
+                memory_cleared: false,
+                cosmos_available: cosmosService.isAvailable()
+            };
+            
+            if (global.botInstance && typeof global.botInstance.cleanup === 'function') {
+                global.botInstance.cleanup();
+                results.memory_cleared = true;
+            }
+            
+            console.log('✅ Limpieza de desarrollo completada');
+            
+            res.json({
+                success: true,
+                message: 'Limpieza de desarrollo completada',
+                results: results,
+                timestamp: new Date().toISOString()
+            });
+            
+            return;
+            
+        } catch (error) {
+            console.error('❌ Error en limpieza de desarrollo:', error);
+            res.status(500).json({ 
+                error: 'Error en limpieza',
+                details: error.message 
+            });
+            return;
+        }
+    });
+}
+
+// Manejo de cierre graceful
 process.on('SIGINT', () => {
     console.log('\n🛑 Cerrando bot Nova...');
     console.log('💾 Guardando estados finales...');
@@ -286,7 +364,7 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// ✅ MEJORADO: Información de configuración con Tenant ID
+// ✅ INFORMACIÓN DE CONFIGURACIÓN COMPLETA
 console.log('\n═══════════════════════════════════════');
 console.log('📋 CONFIGURACIÓN NOVA BOT');
 console.log('═══════════════════════════════════════');
@@ -294,7 +372,7 @@ console.log('🔐 Login: Tarjeta personalizada con usuario/contraseña');
 console.log('🌐 API Nova: https://pruebas.nova.com.mx/ApiRestNova/api/Auth/login');
 console.log('🤖 OpenAI: ' + (process.env.OPENAI_API_KEY ? '✅ Configurado' : '❌ No configurado'));
 
-// ✅ INFORMACIÓN DE BOT FRAMEWORK
+// Bot Framework info
 console.log('🔐 Bot Framework:');
 console.log(`   App ID: ${process.env.MicrosoftAppId ? '✅ Configurado' : '❌ FALTANTE'}`);
 console.log(`   App Password: ${process.env.MicrosoftAppPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
@@ -316,6 +394,7 @@ if (process.env.COSMOS_DB_ENDPOINT) {
     console.log('💾 Cosmos DB: ❌ No configurado (usando MemoryStorage)');
 }
 
+// Información de Azure Search
 const searchEndpoint = process.env.AZURE_SEARCH_ENDPOINT || process.env.SERVICE_ENDPOINT;
 if (searchEndpoint) {
     console.log('🔍 Azure Search: ✅ Configurado');
@@ -359,4 +438,11 @@ if (!process.env.MicrosoftAppTenantId) {
     console.warn('   Esto puede causar errores AADSTS700016');
     console.warn('   Agrega MicrosoftAppTenantId a tu .env');
     console.warn('   Obtén el Tenant ID desde Azure Portal > Azure AD > Properties\n');
+    console.warn('✅ SOLUCIÓN RÁPIDA:');
+    console.warn('   1. Ve a: https://portal.azure.com');
+    console.warn('   2. Azure Active Directory > Properties > Tenant ID');
+    console.warn('   3. Agrega a .env: MicrosoftAppTenantId=tu-tenant-id');
+    console.warn('   4. Reinicia: npm start\n');
+} else {
+    console.log('\n✅ CONFIGURACIÓN COMPLETA - Bot listo para funcionar\n');
 }

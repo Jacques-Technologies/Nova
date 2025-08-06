@@ -184,40 +184,75 @@ class CosmosSetup {
     }
 
     async getStats() {
-        console.log('📊 Obteniendo estadísticas...');
+    try {
+        if (!this.cosmosAvailable) {
+            return {
+                available: false,
+                error: this.initializationError
+            };
+        }
+
+        console.log('📊 Obteniendo estadísticas de Cosmos DB...');
+
+        // ✅ FIX: Usar múltiples consultas simples en lugar de CASE WHEN
+        const queries = {
+            total: {
+                query: "SELECT VALUE COUNT(1) FROM c"
+            },
+            conversations: {
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.documentType = 'conversation_info'"
+            },
+            userMessages: {
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'user'"
+            },
+            botMessages: {
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'bot'"
+            }
+        };
+
+        const results = {};
         
-        try {
-            // Información de la base de datos
-            const dbResponse = await this.database.read();
-            console.log(`📁 Base de datos: ${dbResponse.resource.id}`);
-
-            // Información del contenedor
-            const containerResponse = await this.container.read();
-            const containerInfo = containerResponse.resource;
-            
-            console.log(`📦 Contenedor: ${containerInfo.id}`);
-            console.log(`🔑 Partition Key: ${containerInfo.partitionKey.paths[0]}`);
-            console.log(`⏰ TTL: ${containerInfo.defaultTtl || 'No configurado'} segundos`);
-
-            // Contar documentos (sample)
+        // Ejecutar cada consulta por separado
+        for (const [key, query] of Object.entries(queries)) {
             try {
-                const countQuery = {
-                    query: 'SELECT VALUE COUNT(1) FROM c'
-                };
-                
-                const { resources: countResult } = await this.container.items
-                    .query(countQuery)
+                console.log(`🔍 Ejecutando consulta: ${key}`);
+                const { resources } = await this.container.items
+                    .query(query)
                     .fetchAll();
                 
-                console.log(`📄 Documentos actuales: ${countResult[0] || 0}`);
-            } catch (countError) {
-                console.warn('⚠️ No se pudo contar documentos:', countError.message);
+                results[key] = resources[0] || 0;
+                
+            } catch (queryError) {
+                console.warn(`⚠️ Error en consulta ${key}:`, queryError.message);
+                results[key] = 0;
             }
-
-        } catch (error) {
-            console.warn('⚠️ Error obteniendo estadísticas:', error.message);
         }
+
+        console.log('✅ Estadísticas de Cosmos DB obtenidas exitosamente');
+
+        return {
+            available: true,
+            initialized: this.initialized,
+            database: this.databaseId,
+            container: this.containerId,
+            partitionKey: this.partitionKey,
+            stats: {
+                totalDocuments: results.total,
+                conversations: results.conversations,
+                userMessages: results.userMessages,
+                botMessages: results.botMessages
+            },
+            timestamp: new Date().toISOString()
+        };
+
+    } catch (error) {
+        console.error('❌ Error obteniendo estadísticas de Cosmos DB:', error);
+        return {
+            available: false,
+            error: error.message
+        };
     }
+}
 
     async run() {
         console.log('🚀 ===== CONFIGURACIÓN COSMOS DB =====');

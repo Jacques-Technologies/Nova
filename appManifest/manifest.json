@@ -2,7 +2,7 @@
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
   "manifestVersion": "1.19",
   "version": "1.0.0",
-  "id": "236cbf74-dd25-43fb-9779-ae2dbf3c1739",
+  "id": "dcd9ce45-96c3-43ad-986c-c7e063d0651e",
   "developer": {
       "name": "Nova",
       "websiteUrl": "https://www.nova.com.mx",
@@ -24,7 +24,7 @@
   "accentColor": "#FFFFFF",
   "bots": [
     {
-      "botId": "236cbf74-dd25-43fb-9779-ae2dbf3c1739",
+      "botId": "dcd9ce45-96c3-43ad-986c-c7e063d0651e",
       "scopes": [
         "personal"
       ],

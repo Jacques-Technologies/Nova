@@ -6,10 +6,9 @@ const {
     BotFrameworkAdapter, 
     MemoryStorage, 
     ConversationState, 
-    UserState, 
-    CosmosDbPartitionedStorage
+    UserState   
 } = require('botbuilder');
-
+const { CosmosDbStorage } = require('botbuilder-azure');
 // Importar servicios
 const { TeamsBot } = require('./bots/teamsBot');
 const cosmosService = require('./services/cosmosService');
@@ -124,23 +123,21 @@ async function initializeBot() {
     
     try {
         if (cosmosService.isAvailable()) {
-            console.log('🌐 Configurando Cosmos DB Storage...');
-            
-            storage = new CosmosDbPartitionedStorage({
-                cosmosDbEndpoint: process.env.COSMOS_DB_ENDPOINT,
-                authKey: process.env.COSMOS_DB_KEY,
-                databaseId: process.env.COSMOS_DB_DATABASE_ID,
-                containerId: process.env.COSMOS_DB_CONTAINER_ID,
-                compatibilityMode: false
-            });
-            
-            console.log('✅ Cosmos DB Storage configurado exitosamente');
-            
-        } else {
-            console.warn('⚠️ Cosmos DB no disponible, usando MemoryStorage como fallback');
-            storage = new MemoryStorage();
-        }
-        
+    console.log('🌐 Configurando Cosmos DB Storage...');
+
+    storage = new CosmosDbStorage({
+        serviceEndpoint: process.env.COSMOS_DB_ENDPOINT,
+        authKey: process.env.COSMOS_DB_KEY,
+        databaseId: process.env.COSMOS_DB_DATABASE_ID,
+        containerId: process.env.COSMOS_DB_CONTAINER_ID
+    });
+
+    console.log('✅ Cosmos DB Storage configurado exitosamente');
+
+} else {
+    console.warn('⚠️ Cosmos DB no disponible, usando MemoryStorage como fallback');
+    storage = new MemoryStorage();
+}       
         conversationState = new ConversationState(storage);
         userState = new UserState(storage);
         

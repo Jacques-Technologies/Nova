@@ -169,7 +169,7 @@ class CosmosService {
                     FROM c 
                     WHERE c.conversationId = @conversationId 
                     AND c.userId = @userId
-                    AND c.messageType IS DEFINED
+                    AND IS_DEFINED(c.messageType)
                     ORDER BY c.timestamp DESC
                 `,
                 parameters: [

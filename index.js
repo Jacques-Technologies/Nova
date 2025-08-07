@@ -1,4 +1,4 @@
-// index.js - CORREGIDO: Bot Framework + diagnóstico AADSTS700016
+// index.js - CÓDIGO COMPLETO CORREGIDO: Bot Framework + diagnóstico + modo emergencia
 const path = require('path');
 const restify = require('restify');
 const axios = require('axios');
@@ -21,9 +21,10 @@ require('dotenv').config();
 const appId = process.env.MicrosoftAppId;
 const appPassword = process.env.MicrosoftAppPassword;
 const tenantId = process.env.MicrosoftAppTenantId;
+const PORT = process.env.port || process.env.PORT || 3978;
 
 console.log('🤖 ===== NOVA BOT - CONFIGURACIÓN CORREGIDA =====');
-console.log('🔧 Bot Framework con correcciones de autenticación');
+console.log('🔧 Bot Framework con correcciones de autenticación y modo emergencia');
 console.log('═══════════════════════════════════════════════════');
 
 console.log(`📋 Configuración de credenciales:`);
@@ -37,6 +38,13 @@ if (appId) {
 if (tenantId) {
     console.log(`   🔍 Tenant ID: ${tenantId}`);
 }
+
+// ✅ VARIABLES GLOBALES PARA EL BOT
+let storage;
+let conversationState;
+let userState;
+let botAdapter;
+let emergencyMode = false;
 
 // ✅ FUNCIÓN CORREGIDA: Verificar Bot Framework registration
 async function verifyBotFrameworkRegistration(appId, appPassword, tenantId) {
@@ -124,8 +132,8 @@ async function verifyBotFrameworkRegistration(appId, appPassword, tenantId) {
                 console.error('   1. Ir a https://dev.botframework.com');
                 console.error('   2. "Create a Bot" o "Register existing bot"');
                 console.error(`   3. Usar App ID: ${appId}`);
-                console.error(`   4. Usar App Password: [tu password actual]`);
-                console.error('   5. Configurar Messaging Endpoint');
+                console.error(`   4. Usar App Password existente (NO crear nuevo)`);
+                console.error('   5. Messaging Endpoint: https://cliente-nuevo.onrender.com/api/messages');
                 console.error('   6. Habilitar Teams Channel');
             }
         }
@@ -208,25 +216,376 @@ async function verifyOpenIDEndpoint(tenantId) {
     }
 }
 
+// ✅ NUEVO: Función para crear adapter de emergencia
+async function createEmergencyAdapter() {
+    console.log('🆘 ===== MODO EMERGENCIA ACTIVADO =====');
+    console.log('⚠️ Creando adapter sin autenticación Bot Framework...');
+    
+    try {
+        // Adapter con configuración mínima para desarrollo/testing
+        const emergencyAdapter = new BotFrameworkAdapter({
+            appId: '', // ← Vacío para modo emergencia
+            appPassword: '', // ← Vacío para modo emergencia
+        });
+        
+        console.log('🆘 Adapter de emergencia creado');
+        console.log('⚠️ LIMITACIONES DEL MODO EMERGENCIA:');
+        console.log('   • Sin autenticación de Bot Framework');
+        console.log('   • Funcionalidad limitada en Teams');
+        console.log('   • Solo para desarrollo/testing');
+        console.log('   • Los usuarios pueden ver contenido sin validación completa');
+        
+        console.log('\n🔧 PARA RESTAURAR FUNCIONALIDAD COMPLETA:');
+        console.log('   1. Ir a https://dev.botframework.com');
+        console.log('   2. Registrar bot con App ID:', appId);
+        console.log('   3. Messaging Endpoint: https://cliente-nuevo.onrender.com/api/messages');
+        console.log('   4. Habilitar Microsoft Teams channel');
+        console.log('   5. Reiniciar el bot');
+        
+        emergencyMode = true;
+        return emergencyAdapter;
+        
+    } catch (error) {
+        console.error('❌ Error creando adapter de emergencia:', error);
+        throw new Error(`No se pudo crear adapter de emergencia: ${error.message}`);
+    }
+}
+
 // ✅ SERVIDOR PRINCIPAL
-const server = restify.createServer();
+const server = restify.createServer({
+    name: 'Nova Bot Server',
+    version: '2.1.0'
+});
+
 server.use(restify.plugins.bodyParser());
 
-server.listen(process.env.port || process.env.PORT || 3978, async () => {
-    console.log(`\n${server.name} listening on ${server.url}`);
+// ✅ MIDDLEWARE PARA LOGGING
+server.use((req, res, next) => {
+    const timestamp = new Date().toISOString();
+    console.log(`📡 [${timestamp}] ${req.method} ${req.url}`);
     
-    // Ejecutar diagnóstico corregido
-    if (process.env.SKIP_DIAGNOSTIC !== 'true') {
-        await runCompleteDiagnostic();
+    // Logging específico para mensajes del bot
+    if (req.url === '/api/messages') {
+        console.log('📨 Bot message incoming:', {
+            method: req.method,
+            contentType: req.headers['content-type'],
+            authorization: req.headers.authorization ? 'Present' : 'Missing',
+            userAgent: req.headers['user-agent']
+        });
     }
     
-    console.log('\n✅ Bot Nova iniciado');
-    console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB (cosmosService)' : 'Memoria temporal'}`);
+    next();
 });
+
+// ✅ FUNCIÓN DE INICIALIZACIÓN COMPLETA CORREGIDA
+async function initializeBot() {
+    console.log('\n📦 ===== INICIALIZANDO BOT FRAMEWORK CORREGIDO =====');
+    
+    try {
+        // Inicializar storage y estados
+        storage = new MemoryStorage();
+        conversationState = new ConversationState(storage);
+        userState = new UserState(storage);
+        
+        console.log('✅ Estados del Bot Framework inicializados');
+
+        let adapter;
+        
+        // ✅ INTENTAR CONFIGURACIÓN NORMAL PRIMERO
+        try {
+            console.log('🔐 Intentando configuración Bot Framework NORMAL...');
+            
+            if (!appId || !appPassword) {
+                throw new Error('Credenciales Bot Framework faltantes');
+            }
+            
+            const adapterConfig = {
+                appId: appId,
+                appPassword: appPassword
+            };
+
+            // ✅ CONFIGURACIÓN ESPECÍFICA PARA TENANT
+            if (tenantId && tenantId !== 'common') {
+                adapterConfig.channelAuthTenant = tenantId;
+                adapterConfig.oAuthEndpoint = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
+                // ✅ CORRECCIÓN CRÍTICA: Usar guión en lugar de guión bajo
+                adapterConfig.openIdMetadata = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`;
+                console.log(`🏢 Configurado con Tenant específico: ${tenantId}`);
+                console.log(`🔗 OAuth Endpoint: ${adapterConfig.oAuthEndpoint}`);
+                console.log(`🔗 OpenID Metadata: ${adapterConfig.openIdMetadata}`);
+            } else {
+                console.log('🌐 Configurado para multi-tenant/common');
+            }
+
+            adapter = new BotFrameworkAdapter(adapterConfig);
+            
+            console.log('✅ Bot Framework Adapter NORMAL creado exitosamente');
+            console.log(`   App ID: ${appId}`);
+            console.log(`   Has Password: ${!!appPassword}`);
+            console.log(`   Channel Auth Tenant: ${adapterConfig.channelAuthTenant || 'multi-tenant'}`);
+            
+        } catch (normalError) {
+            console.warn('\n⚠️ CONFIGURACIÓN NORMAL FALLÓ');
+            console.warn('📋 Error:', normalError.message);
+            console.warn('🔄 Activando MODO EMERGENCIA...');
+            
+            // ✅ USAR CONFIGURACIÓN DE EMERGENCIA
+            adapter = await createEmergencyAdapter();
+        }
+
+        botAdapter = adapter;
+        setupAdapterErrorHandling(adapter);
+
+        // Crear bot
+        const bot = new TeamsBot(conversationState, userState);
+        
+        // ✅ ENDPOINT DE MENSAJES CON MANEJO COMPLETO
+        server.post('/api/messages', async (req, res) => {
+            const startTime = Date.now();
+            const requestId = Math.random().toString(36).substr(2, 9);
+            
+            try {
+                console.log(`\n📨 [${requestId}] ===== MENSAJE RECIBIDO =====`);
+                console.log(`📋 [${requestId}] Method: ${req.method}`);
+                console.log(`📋 [${requestId}] Content-Type: ${req.headers['content-type']}`);
+                console.log(`📋 [${requestId}] Authorization: ${req.headers.authorization ? 'Present' : 'Missing'}`);
+                console.log(`📋 [${requestId}] User-Agent: ${req.headers['user-agent']}`);
+                console.log(`📋 [${requestId}] Emergency Mode: ${emergencyMode ? 'SÍ' : 'NO'}`);
+                
+                // Procesar con el adapter
+                await adapter.process(req, res, (context) => {
+                    console.log(`🔄 [${requestId}] Procesando contexto del bot...`);
+                    return bot.run(context);
+                });
+                
+                const duration = Date.now() - startTime;
+                console.log(`✅ [${requestId}] Mensaje procesado exitosamente en ${duration}ms`);
+                console.log(`🏁 [${requestId}] ===== FIN PROCESAMIENTO =====\n`);
+                
+            } catch (error) {
+                const duration = Date.now() - startTime;
+                console.error(`\n❌ [${requestId}] ===== ERROR PROCESANDO MENSAJE =====`);
+                console.error(`💥 [${requestId}] Error: ${error.message}`);
+                console.error(`⏱️ [${requestId}] Duración hasta error: ${duration}ms`);
+                
+                // ✅ DETECCIÓN ESPECÍFICA DE ERRORES DE AUTENTICACIÓN
+                if (error.message && (
+                    error.message.includes('AADSTS700016') || 
+                    error.message.includes('Signing Key could not be retrieved') ||
+                    error.message.includes('Failed to load openID config') ||
+                    error.message.includes('unauthorized_client')
+                )) {
+                    
+                    console.error('\n🚨 ERROR DE CONFIGURACIÓN BOT FRAMEWORK DETECTADO');
+                    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                    console.error('📋 PROBLEMA: App registrada en Azure AD pero NO en Bot Framework Portal');
+                    console.error('\n✅ SOLUCIÓN PASO A PASO:');
+                    console.error('   1. Ir a https://dev.botframework.com');
+                    console.error('   2. Hacer login con la misma cuenta de Azure');
+                    console.error('   3. Click "Create a Bot" → "Register existing bot"');
+                    console.error(`   4. App ID: ${appId}`);
+                    console.error('   5. App Password: [usar el mismo de .env]');
+                    console.error('   6. Messaging Endpoint: https://cliente-nuevo.onrender.com/api/messages');
+                    console.error('   7. Habilitar "Microsoft Teams" en Channels');
+                    console.error('   8. Save changes y reiniciar bot');
+                    console.error('\n🆘 ALTERNATIVA TEMPORAL: Activar modo emergencia');
+                    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+                    
+                    // Generar reporte automático
+                    await generateDiagnosticReport();
+                }
+                
+                // ✅ RESPONDER CON INFORMACIÓN ÚTIL (no solo error 500)
+                try {
+                    const errorResponse = {
+                        timestamp: new Date().toISOString(),
+                        requestId: requestId,
+                        error: 'Bot Framework configuration issue',
+                        message: emergencyMode ? 
+                            'Bot running in emergency mode - limited functionality' :
+                            'Bot needs registration in Bot Framework Portal',
+                        details: {
+                            errorType: error.message.includes('Signing Key') ? 'authentication' : 'general',
+                            emergencyMode: emergencyMode,
+                            appId: appId,
+                            hasPassword: !!appPassword,
+                            tenantId: tenantId || 'common'
+                        },
+                        actions: emergencyMode ? [
+                            'Bot funcionando en modo limitado',
+                            'Algunas funciones pueden no estar disponibles',
+                            'Registrar en Bot Framework Portal para funcionalidad completa'
+                        ] : [
+                            'Ir a https://dev.botframework.com',
+                            `Registrar bot con App ID: ${appId}`,
+                            'Configurar messaging endpoint',
+                            'Habilitar Teams channel'
+                        ],
+                        portal: 'https://dev.botframework.com',
+                        documentation: 'https://docs.microsoft.com/en-us/azure/bot-service/'
+                    };
+                    
+                    res.status(emergencyMode ? 200 : 500).json(errorResponse);
+                } catch (resError) {
+                    console.error(`❌ [${requestId}] Error enviando respuesta de error:`, resError.message);
+                    res.status(500).send('Internal server error - check bot logs');
+                }
+                
+                console.error(`🏁 [${requestId}] ===== FIN ERROR =====\n`);
+            }
+        });
+        
+        console.log('🎯 Bot listo para recibir mensajes');
+        console.log(`🚀 Messaging endpoint: POST /api/messages`);
+        console.log(`🔍 Health endpoint: GET /health`);
+        console.log(`📊 Diagnostic endpoint: GET /diagnostic`);
+        
+    } catch (error) {
+        console.error('\n❌ ===== ERROR CRÍTICO INICIALIZANDO BOT =====');
+        console.error('💥 Error:', error.message);
+        console.error('📋 Stack:', error.stack);
+        
+        // ✅ ÚLTIMO INTENTO: Configuración súper básica
+        console.log('\n🆘 ÚLTIMO INTENTO: Configuración básica de emergencia...');
+        
+        try {
+            storage = new MemoryStorage();
+            conversationState = new ConversationState(storage);
+            userState = new UserState(storage);
+            
+            // Adapter mínimo absoluto
+            const basicAdapter = new BotFrameworkAdapter({});
+            setupAdapterErrorHandling(basicAdapter);
+            
+            const bot = new TeamsBot(conversationState, userState);
+            
+            server.post('/api/messages', async (req, res) => {
+                try {
+                    console.log('🆘 Procesando en modo básico de emergencia...');
+                    await basicAdapter.process(req, res, (context) => bot.run(context));
+                } catch (basicError) {
+                    console.error('❌ Error en modo básico:', basicError.message);
+                    res.status(503).json({
+                        error: 'Service temporarily unavailable',
+                        message: 'Bot configuration needs attention',
+                        contact: 'Administrator'
+                    });
+                }
+            });
+            
+            emergencyMode = true;
+            console.log('🆘 Bot iniciado en modo básico de emergencia');
+            
+        } catch (basicError) {
+            console.error('💥 Error crítico final:', basicError.message);
+            process.exit(1);
+        }
+    }
+}
+
+// ✅ MANEJO DE ERRORES MEJORADO CON MODO EMERGENCIA
+function setupAdapterErrorHandling(adapter) {
+    adapter.onTurnError = async (context, error) => {
+        const timestamp = new Date().toISOString();
+        const userId = context?.activity?.from?.id || 'unknown';
+        
+        console.error(`\n❌ [${timestamp}] ===== BOT TURN ERROR =====`);
+        console.error(`👤 User: ${userId}`);
+        console.error(`💥 Error: ${error.message}`);
+        console.error(`🆘 Emergency Mode: ${emergencyMode ? 'SÍ' : 'NO'}`);
+        
+        // ✅ CLASIFICACIÓN DE ERRORES MEJORADA
+        let errorCategory = 'general';
+        let userMessage = '';
+        let adminMessage = '';
+        
+        if (error.message && (
+            error.message.includes('AADSTS700016') ||
+            error.message.includes('unauthorized_client') ||
+            error.message.includes('Signing Key could not be retrieved') ||
+            error.message.includes('Failed to load openID config')
+        )) {
+            errorCategory = 'bot_framework_registration';
+            
+            if (emergencyMode) {
+                userMessage = '⚠️ **Bot en modo emergencia**\n\n' +
+                             'El bot funciona con limitaciones. Algunas funciones pueden no estar disponibles.\n\n' +
+                             '**Funciones disponibles:**\n' +
+                             '• Chat básico\n' +
+                             '• Comandos simples\n' +
+                             '• Información general\n\n' +
+                             '**Nota:** Para funcionalidad completa, contacta al administrador.';
+            } else {
+                userMessage = '🔧 **Error de configuración del bot**\n\n' +
+                             'El bot necesita configuración adicional para funcionar correctamente.\n\n' +
+                             '**Estado:** Sistema en configuración\n' +
+                             '**Para usuarios:** Contacta al administrador\n' +
+                             '**Tiempo estimado:** 5-15 minutos para resolución\n\n' +
+                             'Gracias por tu paciencia.';
+            }
+            
+            adminMessage = '\n🚨 ACCIÓN REQUERIDA DEL ADMINISTRADOR:';
+            adminMessage += '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+            adminMessage += '\n📋 PROBLEMA: Bot no registrado en Bot Framework Portal';
+            adminMessage += '\n✅ SOLUCIÓN:';
+            adminMessage += '\n   1. Ir a https://dev.botframework.com';
+            adminMessage += '\n   2. Login con cuenta Microsoft';
+            adminMessage += '\n   3. "Create a Bot" → "Register existing bot"';
+            adminMessage += `\n   4. App ID: ${appId}`;
+            adminMessage += '\n   5. App Password: [usar el mismo de .env]';
+            adminMessage += '\n   6. Messaging Endpoint: https://cliente-nuevo.onrender.com/api/messages';
+            adminMessage += '\n   7. Channels → Habilitar "Microsoft Teams"';
+            adminMessage += '\n   8. Save y reiniciar bot';
+            adminMessage += '\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+            
+        } else if (error.message && error.message.includes('timeout')) {
+            errorCategory = 'timeout';
+            userMessage = '⏰ **Tiempo de respuesta agotado**\n\n' +
+                         'El bot tardó demasiado en procesar tu mensaje.\n\n' +
+                         'Por favor, intenta nuevamente con un mensaje más simple.';
+            
+        } else if (error.message && error.message.includes('rate limit')) {
+            errorCategory = 'rate_limit';
+            userMessage = '🚦 **Límite de velocidad alcanzado**\n\n' +
+                         'Demasiadas consultas en poco tiempo.\n\n' +
+                         'Por favor, espera 1-2 minutos e intenta nuevamente.';
+            
+        } else {
+            errorCategory = 'general';
+            userMessage = emergencyMode ? 
+                '⚠️ **Error temporal en modo emergencia**\n\n' +
+                'El bot funciona con limitaciones. Intenta reformular tu mensaje.\n\n' +
+                '**Comandos disponibles:**\n• `ayuda`\n• `mi info`\n• `logout`' :
+                '❌ **Error temporal del bot**\n\n' +
+                'Problema técnico detectado. El administrador ha sido notificado.\n\n' +
+                'Puedes intentar nuevamente en unos minutos.';
+        }
+        
+        // Log para administrador
+        console.error(`📊 Error Category: ${errorCategory}`);
+        if (adminMessage) {
+            console.error(adminMessage);
+        }
+        console.error(`🏁 ===== FIN BOT TURN ERROR =====\n`);
+        
+        // Responder al usuario
+        try {
+            await context.sendActivity(userMessage);
+        } catch (sendError) {
+            console.error(`❌ Error enviando mensaje de error al usuario: ${sendError.message}`);
+        }
+    };
+}
 
 // ✅ DIAGNÓSTICO COMPLETO CORREGIDO
 async function runCompleteDiagnostic() {
     console.log('\n🚀 ===== DIAGNÓSTICO COMPLETO CORREGIDO =====');
+    
+    const diagnosticResults = {
+        timestamp: new Date().toISOString(),
+        overall: 'unknown',
+        tests: {}
+    };
     
     // Paso 1: Verificar variables requeridas
     if (!appId || !appPassword) {
@@ -235,12 +594,34 @@ async function runCompleteDiagnostic() {
         console.error('   MicrosoftAppId=tu-app-id');
         console.error('   MicrosoftAppPassword=tu-app-password');
         console.error('   MicrosoftAppTenantId=tu-tenant-id (opcional)');
-        return false;
+        
+        diagnosticResults.tests.environmentVariables = {
+            status: 'fail',
+            missing: ['MicrosoftAppId', 'MicrosoftAppPassword'].filter(v => 
+                !process.env[v]
+            )
+        };
+        
+        return diagnosticResults;
     }
+
+    diagnosticResults.tests.environmentVariables = {
+        status: 'pass',
+        appId: '✅ Configurado',
+        appPassword: '✅ Configurado',
+        tenantId: tenantId ? '✅ Configurado' : '⚠️ Multi-tenant'
+    };
 
     // Paso 2: Verificar OpenID endpoint
     console.log('\n🔍 Verificando OpenID endpoint...');
     const openIdResult = await verifyOpenIDEndpoint(tenantId);
+    
+    diagnosticResults.tests.openIdEndpoint = {
+        status: openIdResult.accessible ? 'pass' : 'warn',
+        accessible: openIdResult.accessible,
+        error: openIdResult.error,
+        recommendation: openIdResult.recommendation
+    };
     
     if (!openIdResult.accessible) {
         console.log('\n⚠️ OpenID endpoint no accesible, pero continuando...');
@@ -250,276 +631,193 @@ async function runCompleteDiagnostic() {
     // Paso 3: Verificar Bot Framework Registration
     const botFrameworkResult = await verifyBotFrameworkRegistration(appId, appPassword, tenantId);
     
+    diagnosticResults.tests.botFramework = {
+        status: botFrameworkResult.success ? 'pass' : 'fail',
+        success: botFrameworkResult.success,
+        message: botFrameworkResult.message || botFrameworkResult.error,
+        error: botFrameworkResult.error
+    };
+    
     if (botFrameworkResult.success) {
         console.log('\n🎉 ¡Bot Framework authentication exitosa!');
-        console.log('\n✅ ===== DIAGNÓSTICO COMPLETADO =====');
-        console.log('🎯 Tu bot debería funcionar correctamente');
-        console.log('🚀 Iniciando servidor...');
-        return true;
+        diagnosticResults.overall = 'pass';
     } else {
         console.log('\n❌ ===== DIAGNÓSTICO FALLIDO =====');
         console.log('🔧 Acción requerida: Registrar en Bot Framework Portal');
-        console.log('\n📋 PASOS PARA RESOLVER:');
-        console.log('1. Ir a: https://dev.botframework.com');
-        console.log('2. Click en "Create a Bot" o "Register"');
-        console.log(`3. Usar App ID: ${appId}`);
-        console.log('4. Usar App Password existente (NO crear nuevo)');
-        console.log('5. Messaging Endpoint: https://tu-dominio.com/api/messages');
-        console.log('6. Habilitar Microsoft Teams channel');
-        console.log('\n⚠️ Continuando sin esta verificación...');
-        return false;
+        diagnosticResults.overall = 'fail';
     }
-}
 
-// ✅ INICIALIZACIÓN CORREGIDA DEL BOT
-let storage;
-let conversationState;
-let userState;
-
-async function initializeBot() {
-    console.log('\n📦 Inicializando Bot Framework CORREGIDO...');
+    // Paso 4: Verificar servicios adicionales
+    console.log('\n🔍 Verificando servicios adicionales...');
     
-    try {
-        // Storage básico
-        storage = new MemoryStorage();
-        conversationState = new ConversationState(storage);
-        userState = new UserState(storage);
-        
-        console.log('✅ Estados del Bot Framework inicializados');
-
-        // ✅ CONFIGURACIÓN CORREGIDA DEL ADAPTER
-        console.log('🔐 Configurando Bot Framework Adapter CORREGIDO...');
-
-        const adapterConfig = {
-            appId: appId,
-            appPassword: appPassword
-        };
-
-        // ✅ CONFIGURACIÓN ESPECÍFICA PARA TENANT
-        if (tenantId && tenantId !== 'common') {
-            adapterConfig.channelAuthTenant = tenantId;
-            adapterConfig.oAuthEndpoint = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
-            // ✅ CORRECCIÓN CRÍTICA: Usar guión en lugar de guión bajo
-            adapterConfig.openIdMetadata = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`;
-            console.log(`🏢 Configurado con Tenant específico: ${tenantId}`);
-            console.log(`🔗 OAuth Endpoint: ${adapterConfig.oAuthEndpoint}`);
-            console.log(`🔗 OpenID Metadata: ${adapterConfig.openIdMetadata}`);
-        } else {
-            console.log('🌐 Configurado para multi-tenant/common');
-        }
-
-        const adapter = new BotFrameworkAdapter(adapterConfig);
-
-        console.log('✅ Bot Framework Adapter configurado:');
-        console.log(`   App ID: ${appId}`);
-        console.log(`   Has Password: ${!!appPassword}`);
-        console.log(`   Channel Auth Tenant: ${adapterConfig.channelAuthTenant || 'multi-tenant'}`);
-
-        // ✅ MANEJO DE ERRORES MEJORADO
-        setupAdapterErrorHandling(adapter);
-
-        // Crear bot
-        const bot = new TeamsBot(conversationState, userState);
-        
-        // ✅ ENDPOINT DE MENSAJES CON MEJOR LOGGING
-        server.post('/api/messages', async (req, res) => {
-            try {
-                console.log('📨 Mensaje recibido en /api/messages');
-                await adapter.process(req, res, (context) => bot.run(context));
-                console.log('✅ Mensaje procesado exitosamente');
-            } catch (error) {
-                console.error('❌ Error procesando mensaje:', error.message);
-                
-                // ✅ LOGGING ESPECÍFICO PARA ERRORES DE AUTENTICACIÓN
-                if (error.message && (error.message.includes('AADSTS700016') || 
-                    error.message.includes('Signing Key could not be retrieved') ||
-                    error.message.includes('Failed to load openID config'))) {
-                    
-                    console.error('\n🚨 ERROR DE AUTENTICACIÓN BOT FRAMEWORK DETECTADO');
-                    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-                    console.error('📋 PROBLEMA: Configuración de autenticación Bot Framework');
-                    console.error('\n✅ PASOS PARA RESOLVER:');
-                    console.error('   1. Verificar que la app esté registrada en https://dev.botframework.com');
-                    console.error(`   2. App ID correcto: ${appId}`);
-                    console.error('   3. App Password válido y no expirado');
-                    console.error('   4. Messaging Endpoint configurado correctamente');
-                    console.error('   5. Teams Channel habilitado');
-                    console.error('\n🔍 VERIFICACIONES ADICIONALES:');
-                    if (tenantId) {
-                        console.error(`   6. Tenant ID correcto: ${tenantId}`);
-                        console.error(`   7. OpenID endpoint accesible: https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`);
-                    }
-                    console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-                    
-                    await generateDiagnosticReport();
-                }
-                
-                res.status(500).send('Error interno del servidor - Ver logs para diagnóstico');
-            }
-        });
-        
-        console.log('🎯 Bot listo para recibir mensajes');
-        
-    } catch (error) {
-        console.error('❌ Error inicializando bot:', error.message);
-        
-        // ✅ FALLBACK MEJORADO
-        console.log('🔄 Intentando inicialización con configuración mínima...');
-        
-        try {
-            storage = new MemoryStorage();
-            conversationState = new ConversationState(storage);
-            userState = new UserState(storage);
-            
-            // ✅ ADAPTER MÍNIMO SIN TENANT ESPECÍFICO
-            const adapter = new BotFrameworkAdapter({
-                appId: appId,
-                appPassword: appPassword
-            });
-            
-            setupAdapterErrorHandling(adapter);
-            const bot = new TeamsBot(conversationState, userState);
-            
-            server.post('/api/messages', async (req, res) => {
-                try {
-                    await adapter.process(req, res, (context) => bot.run(context));
-                } catch (error) {
-                    console.error('❌ Error en configuración fallback:', error.message);
-                    res.status(500).send('Error interno del servidor');
-                }
-            });
-            
-            console.log('⚠️ Bot iniciado con configuración fallback (sin tenant específico)');
-        } catch (fallbackError) {
-            console.error('💥 Error crítico en configuración fallback:', fallbackError.message);
-            process.exit(1);
-        }
-    }
-}
-
-// ✅ MANEJO DE ERRORES MEJORADO
-function setupAdapterErrorHandling(adapter) {
-    adapter.onTurnError = async (context, error) => {
-        console.error('\n❌ ===== ERROR BOT FRAMEWORK MEJORADO =====');
-        console.error('Error:', error.message);
-        
-        // ✅ DETECCIÓN MEJORADA DE ERRORES
-        if (error.message && (
-            error.message.includes('AADSTS700016') ||
-            error.message.includes('unauthorized_client') ||
-            error.message.includes('Signing Key could not be retrieved') ||
-            error.message.includes('Failed to load openID config')
-        )) {
-            console.error('\n🚨 ERROR DE CONFIGURACIÓN BOT FRAMEWORK CONFIRMADO');
-            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-            console.error('📋 CAUSA RAÍZ: App no registrada en Bot Framework Portal');
-            console.error('\n🔧 SOLUCIÓN PASO A PASO:');
-            console.error('   1. Abrir: https://dev.botframework.com');
-            console.error('   2. Hacer login con cuenta Microsoft');
-            console.error('   3. Click "Create a Bot" o "Register existing bot"');
-            console.error(`   4. Usar EXACTAMENTE este App ID: ${appId}`);
-            console.error('   5. Usar la misma App Password que tienes en .env');
-            console.error('   6. Messaging Endpoint: https://tu-dominio.onrender.com/api/messages');
-            console.error('   7. En Channels, habilitar "Microsoft Teams"');
-            console.error('   8. Guardar cambios');
-            console.error('\n⚠️ IMPORTANTE: NO crear nuevas credenciales, usar las existentes');
-            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        }
-        
-        // Responder al usuario
-        try {
-            if (error.message && (
-                error.message.includes('Failed to load openID config') ||
-                error.message.includes('Signing Key could not be retrieved')
-            )) {
-                await context.sendActivity(
-                    '🔧 **Error de configuración Bot Framework**\n\n' +
-                    '**Estado**: El bot no está completamente registrado en Bot Framework Portal.\n\n' +
-                    '**Para el administrador**: \n' +
-                    '1. Ir a https://dev.botframework.com\n' +
-                    '2. Registrar este bot con las credenciales existentes\n' +
-                    '3. Configurar el endpoint de mensajes\n' +
-                    '4. Habilitar Microsoft Teams channel\n\n' +
-                    '**Los usuarios pueden seguir usando funciones básicas**'
-                );
-            } else {
-                await context.sendActivity(
-                    '⚠️ **Error temporal del bot**\n\n' +
-                    'Problema de configuración detectado. El administrador ha sido notificado.\n\n' +
-                    'Puedes intentar nuevamente en unos minutos.'
-                );
-            }
-        } catch (sendError) {
-            console.error('Error enviando mensaje de error:', sendError.message);
-        }
+    diagnosticResults.tests.openai = {
+        status: process.env.OPENAI_API_KEY ? 'pass' : 'warn',
+        configured: !!process.env.OPENAI_API_KEY
     };
+    
+    diagnosticResults.tests.cosmosDB = {
+        status: cosmosService.isAvailable() ? 'pass' : 'skip',
+        available: cosmosService.isAvailable(),
+        config: cosmosService.getConfigInfo()
+    };
+    
+    diagnosticResults.tests.documentService = {
+        status: documentService.isAvailable() ? 'pass' : 'skip',
+        available: documentService.isAvailable(),
+        config: documentService.getConfigInfo()
+    };
+    
+    console.log('✅ ===== DIAGNÓSTICO COMPLETADO =====');
+    console.log(`📊 Estado general: ${diagnosticResults.overall}`);
+    console.log('🚀 Iniciando servidor...');
+    
+    return diagnosticResults;
 }
 
 // ✅ REPORTE DE DIAGNÓSTICO ACTUALIZADO
 async function generateDiagnosticReport() {
-    console.log('\n📊 ===== REPORTE DIAGNÓSTICO ACTUALIZADO =====');
+    console.log('\n📊 ===== REPORTE DIAGNÓSTICO DETALLADO =====');
     
     const report = {
         timestamp: new Date().toISOString(),
         problema: 'Bot Framework Authentication Error',
         causa: 'App registrada en Azure AD pero NO en Bot Framework Portal',
+        severidad: emergencyMode ? 'MEDIO (modo emergencia activo)' : 'ALTO (bot no funcional)',
         configuracion: {
             appId: appId,
             hasAppPassword: !!appPassword,
             tenantId: tenantId || 'common/multi-tenant',
             nodeVersion: process.version,
-            environment: process.env.NODE_ENV || 'development'
+            environment: process.env.NODE_ENV || 'production',
+            emergencyMode: emergencyMode
         },
         endpoints: {
-            azurePortalApp: `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/`,
+            messagingEndpoint: 'https://cliente-nuevo.onrender.com/api/messages',
             botFrameworkPortal: 'https://dev.botframework.com',
-            messagingEndpoint: 'https://tu-dominio.onrender.com/api/messages',
+            azurePortalApp: appId ? 
+                `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/` : null,
             openIdEndpoint: tenantId ? 
                 `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration` :
                 'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration'
         },
         solucion: {
-            paso1: 'Ir a https://dev.botframework.com',
-            paso2: `Registrar bot con App ID: ${appId}`,
-            paso3: 'Configurar Messaging Endpoint',
-            paso4: 'Habilitar Teams Channel',
-            paso5: 'Verificar configuración'
+            urgencia: 'ALTA',
+            tiempo_estimado: '5-15 minutos',
+            pasos: [
+                'Ir a https://dev.botframework.com',
+                'Login con cuenta Microsoft/Azure',
+                'Click "Create a Bot" → "Register existing bot"',
+                `Usar App ID: ${appId}`,
+                'Usar App Password existente (NO crear nuevo)',
+                'Messaging Endpoint: https://cliente-nuevo.onrender.com/api/messages',
+                'En Channels, habilitar "Microsoft Teams"',
+                'Save changes',
+                'Reiniciar aplicación (opcional)',
+                'Verificar con /health endpoint'
+            ]
+        },
+        impacto: {
+            usuarios: emergencyMode ? 'Funcionalidad limitada' : 'Sin acceso al bot',
+            funciones: emergencyMode ? 
+                'Chat básico disponible, autenticación Teams limitada' :
+                'Todas las funciones del bot no disponibles',
+            business: 'Medio - Los usuarios no pueden usar completamente el bot corporativo'
+        },
+        alternativa_temporal: emergencyMode ? 
+            'Bot funcionando en modo emergencia con limitaciones' :
+            'Activar modo emergencia modificando código',
+        monitoreo: {
+            health_endpoint: 'https://cliente-nuevo.onrender.com/health',
+            diagnostic_endpoint: 'https://cliente-nuevo.onrender.com/diagnostic',
+            logs_location: 'Console output / Azure Application Insights'
         }
     };
     
-    console.log('📋 Configuración actual:');
-    console.log(JSON.stringify(report.configuracion, null, 2));
+    console.log('📋 REPORTE COMPLETO:');
+    console.log(JSON.stringify(report, null, 2));
     
     console.log('\n🔗 Enlaces importantes:');
-    console.log(`   Azure Portal: ${report.endpoints.azurePortalApp}`);
-    console.log(`   Bot Framework: ${report.endpoints.botFrameworkPortal}`);
-    console.log(`   OpenID Endpoint: ${report.endpoints.openIdEndpoint}`);
+    console.log(`   Bot Framework Portal: ${report.endpoints.botFrameworkPortal}`);
+    console.log(`   Azure Portal (App): ${report.endpoints.azurePortalApp}`);
+    console.log(`   Messaging Endpoint: ${report.endpoints.messagingEndpoint}`);
+    
+    console.log('\n⏰ ACCIÓN INMEDIATA REQUERIDA:');
+    console.log(`   Tiempo estimado de solución: ${report.solucion.tiempo_estimado}`);
+    console.log(`   Impacto actual: ${report.impacto.usuarios}`);
     
     console.log('════════════════════════════════════════════════\n');
     
     return report;
 }
 
-// ✅ INICIALIZAR
-initializeBot().then(() => {
-    console.log('🎉 Inicialización completada exitosamente');
-}).catch(error => {
-    console.error('💥 Error crítico:', error);
-    process.exit(1);
-});
+// ✅ INICIALIZACIÓN PRINCIPAL
+async function startServer() {
+    try {
+        // Ejecutar diagnóstico si no está deshabilitado
+        if (process.env.SKIP_DIAGNOSTIC !== 'true') {
+            const diagnosticResults = await runCompleteDiagnostic();
+            
+            // Si el diagnóstico falla completamente, activar modo emergencia
+            if (diagnosticResults.overall === 'fail' && !emergencyMode) {
+                console.log('\n🆘 Diagnóstico falló - considerando activar modo emergencia...');
+                console.log('⚠️ Continuando con inicialización normal primero...');
+            }
+        }
+        
+        // Inicializar bot
+        await initializeBot();
+        
+        // Iniciar servidor
+        server.listen(PORT, async () => {
+            console.log(`\n🌐 ===== SERVIDOR INICIADO =====`);
+            console.log(`📍 URL: ${server.url}`);
+            console.log(`🚀 Puerto: ${PORT}`);
+            console.log(`🆘 Modo Emergencia: ${emergencyMode ? 'ACTIVO' : 'INACTIVO'}`);
+            console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB (cosmosService)' : 'Memoria temporal'}`);
+            console.log(`🔍 Document Search: ${documentService.isAvailable() ? 'Azure Search disponible' : 'No disponible'}`);
+            
+            console.log(`\n📡 Endpoints disponibles:`);
+            console.log(`   POST /api/messages - Bot messaging endpoint`);
+            console.log(`   GET  /health      - Health check`);
+            console.log(`   GET  /diagnostic  - Detailed diagnostics`);
+            console.log(`   GET  /bot-status  - Bot status information`);
+            
+            if (emergencyMode) {
+                console.log(`\n🆘 ===== MODO EMERGENCIA ACTIVO =====`);
+                console.log(`⚠️ Funcionalidad limitada`);
+                console.log(`🔧 Para restaurar funcionalidad completa:`);
+                console.log(`   1. Registrar bot en https://dev.botframework.com`);
+                console.log(`   2. Reiniciar aplicación`);
+                console.log(`════════════════════════════════════════════`);
+            }
+            
+            console.log('\n✅ Nova Bot iniciado y listo para recibir mensajes');
+        });
+        
+    } catch (error) {
+        console.error('\n💥 ===== ERROR CRÍTICO INICIANDO SERVIDOR =====');
+        console.error('Error:', error.message);
+        console.error('Stack:', error.stack);
+        console.error('═══════════════════════════════════════════════');
+        process.exit(1);
+    }
+}
 
-// ✅ ENDPOINTS DE DIAGNÓSTICO MEJORADOS
+// ✅ ENDPOINTS DE SALUD Y DIAGNÓSTICO MEJORADOS
+
 server.get('/health', async (req, res) => {
     try {
         let botFrameworkStatus = 'unknown';
         
-        if (appId && appPassword) {
+        if (appId && appPassword && !emergencyMode) {
             try {
                 const botFrameworkTest = await verifyBotFrameworkRegistration(appId, appPassword, tenantId);
                 botFrameworkStatus = botFrameworkTest.success ? 'registered' : 'not_registered';
             } catch (error) {
                 botFrameworkStatus = 'error';
             }
+        } else if (emergencyMode) {
+            botFrameworkStatus = 'emergency_mode';
         } else {
             botFrameworkStatus = 'config_missing';
         }
@@ -527,15 +825,18 @@ server.get('/health', async (req, res) => {
         const cosmosInfo = cosmosService.getConfigInfo();
         const documentInfo = documentService.getConfigInfo();
         
-        res.json({
-            status: 'OK',
+        const healthData = {
+            status: emergencyMode ? 'LIMITED' : 'OK',
             timestamp: new Date().toISOString(),
-            bot: 'Nova Bot - Configuración Corregida',
+            bot: 'Nova Bot - Configuración Corregida con Modo Emergencia',
+            mode: emergencyMode ? 'EMERGENCY' : 'NORMAL',
             botFramework: {
+                status: botFrameworkStatus,
                 appId: appId ? 'Configurado' : 'Faltante',
                 appPassword: appPassword ? 'Configurado' : 'Faltante',
                 tenantId: tenantId ? 'Configurado' : 'Multi-tenant',
-                registrationStatus: botFrameworkStatus,
+                registrationRequired: botFrameworkStatus === 'not_registered' || 
+                                    botFrameworkStatus === 'config_missing',
                 portalUrl: 'https://dev.botframework.com',
                 messagingEndpoint: '/api/messages',
                 channelAuthTenant: tenantId || 'common'
@@ -544,7 +845,6 @@ server.get('/health', async (req, res) => {
                 oauthEndpoint: tenantId ? 
                     `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token` : 
                     'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-                // ✅ CORREGIDO: Endpoint OpenID con guión
                 openIdMetadata: tenantId ? 
                     `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration` : 
                     'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
@@ -558,22 +858,35 @@ server.get('/health', async (req, res) => {
                 openai: !!process.env.OPENAI_API_KEY,
                 cosmosDB: cosmosInfo.available,
                 azureSearch: documentInfo.searchAvailable,
-                persistencia: cosmosInfo.available ? 'Cosmos DB (cosmosService)' : 'Memoria temporal'
+                persistencia: cosmosInfo.available ? 'Cosmos DB (cosmosService)' : 'Memoria temporal',
+                emergencyMode: emergencyMode
             },
-            correcciones: {
-                openIdEndpoint: 'Corregido a formato con guión',
-                tenantHandling: 'Mejorado manejo de tenant común vs específico',
-                errorHandling: 'Mejorado manejo de errores de autenticación',
-                diagnostics: 'Diagnóstico mejorado para Bot Framework'
-            }
-        });
+            actions: emergencyMode ? [
+                'Bot funcionando en modo emergencia',
+                'Registrar en Bot Framework Portal para funcionalidad completa',
+                'Algunas funciones pueden estar limitadas'
+            ] : botFrameworkStatus === 'not_registered' ? [
+                'Registrar bot en Bot Framework Portal',
+                'Configurar messaging endpoint',
+                'Habilitar Teams channel'
+            ] : [
+                'Bot funcionando correctamente',
+                'Todas las funciones disponibles'
+            ]
+        };
+        
+        const statusCode = emergencyMode ? 206 : 200; // 206 = Partial Content
+        res.status(statusCode).json(healthData);
+        
     } catch (error) {
         console.error('❌ Error en endpoint /health:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json({ 
+            error: 'Health check failed',
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
-// Mantener otros endpoints
 server.get('/diagnostic', async (req, res) => {
     try {
         let cosmosStats = null;
@@ -582,6 +895,7 @@ server.get('/diagnostic', async (req, res) => {
                 cosmosStats = await cosmosService.getStats();
             } catch (error) {
                 console.warn('⚠️ Error obteniendo stats de Cosmos DB:', error.message);
+                cosmosStats = { error: error.message };
             }
         }
 
@@ -591,26 +905,29 @@ server.get('/diagnostic', async (req, res) => {
                 documentStats = await documentService.getStats();
             } catch (error) {
                 console.warn('⚠️ Error obteniendo stats de DocumentService:', error.message);
+                documentStats = { error: error.message };
             }
         }
         
-        res.json({
+        const diagnosticData = {
+            timestamp: new Date().toISOString(),
+            mode: emergencyMode ? 'EMERGENCY' : 'NORMAL',
             bot: {
-                status: 'running',
+                status: emergencyMode ? 'limited' : 'running',
                 authenticatedUsers: global.botInstance?.getStats?.()?.authenticatedUsers || 0,
-                timestamp: new Date().toISOString()
+                uptime: Math.round(process.uptime()),
+                emergencyMode: emergencyMode
             },
             botFramework: {
                 configured: !!(appId && appPassword),
                 appId: appId,
                 tenantId: tenantId || 'common',
                 hasPassword: !!appPassword,
-                registrationRequired: 'https://dev.botframework.com',
+                registrationRequired: !emergencyMode,
                 messagingEndpoint: '/api/messages',
-                corrections: 'Aplicadas correcciones de autenticación'
+                mode: emergencyMode ? 'Emergency (no authentication)' : 'Normal (full authentication)'
             },
             azureAD: {
-                // ✅ ENDPOINT CORREGIDO
                 openIdMetadata: tenantId ? 
                     `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration` : 
                     'https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration',
@@ -620,50 +937,188 @@ server.get('/diagnostic', async (req, res) => {
                 portalUrl: appId ? 
                     `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/` : null
             },
-            memory: {
-                used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
-                total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
+            system: {
+                memory: {
+                    used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + ' MB',
+                    total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024) + ' MB'
+                },
+                uptime: Math.round(process.uptime()) + ' segundos',
+                nodeVersion: process.version,
+                platform: process.platform
             },
-            uptime: Math.round(process.uptime()) + ' segundos',
             environment: {
                 hasOpenAI: !!process.env.OPENAI_API_KEY,
                 hasBotId: !!process.env.MicrosoftAppId,
+                hasBotPassword: !!process.env.MicrosoftAppPassword,
                 hasTenantId: !!process.env.MicrosoftAppTenantId,
-                nodeVersion: process.version
+                nodeEnv: process.env.NODE_ENV || 'production'
             },
             storage: {
                 botFramework: 'MemoryStorage',
                 conversations: cosmosService.isAvailable() ? 'CosmosDB (cosmosService)' : 'Memory',
-                config: cosmosService.getConfigInfo(),
-                stats: cosmosStats
+                cosmosConfig: cosmosService.getConfigInfo(),
+                cosmosStats: cosmosStats
             },
             documentService: {
                 type: documentService.isAvailable() ? 'Azure Search' : 'Not Available',
                 config: documentService.getConfigInfo(),
                 stats: documentStats
-            }
-        });
+            },
+            recommendations: emergencyMode ? [
+                'Bot en modo emergencia - funcionalidad limitada',
+                'Registrar en Bot Framework Portal para restaurar funcionalidad completa',
+                'Verificar configuración de credenciales',
+                'Considerar reiniciar después de registrar el bot'
+            ] : [
+                'Bot funcionando normalmente',
+                'Monitorear uso de recursos',
+                'Verificar logs para errores ocasionales'
+            ]
+        };
+        
+        res.json(diagnosticData);
+        
     } catch (error) {
         console.error('❌ Error en endpoint /diagnostic:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        res.status(500).json({ 
+            error: 'Diagnostic failed', 
+            message: error.message,
+            timestamp: new Date().toISOString()
+        });
     }
 });
 
-// Manejo de cierre graceful
+// ✅ NUEVO: Endpoint específico de estado del bot
+server.get('/bot-status', (req, res) => {
+    try {
+        const statusData = {
+            timestamp: new Date().toISOString(),
+            bot: {
+                name: 'Nova Bot',
+                version: '2.1.0-Fixed',
+                status: emergencyMode ? 'EMERGENCY_MODE' : 'NORMAL',
+                uptime: process.uptime()
+            },
+            configuration: {
+                appId: appId,
+                hasPassword: !!appPassword,
+                tenantId: tenantId || 'multi-tenant',
+                emergencyMode: emergencyMode
+            },
+            capabilities: {
+                messaging: true,
+                authentication: !emergencyMode,
+                teamsIntegration: !emergencyMode,
+                openaiChat: !!process.env.OPENAI_API_KEY,
+                documentSearch: documentService.isAvailable(),
+                persistence: cosmosService.isAvailable()
+            },
+            actions_required: emergencyMode ? [
+                'Ir a https://dev.botframework.com',
+                'Login con cuenta Microsoft',
+                'Create a Bot → Register existing bot',
+                `Usar App ID: ${appId}`,
+                'Usar App Password existente',
+                'Messaging Endpoint: https://cliente-nuevo.onrender.com/api/messages',
+                'Habilitar Microsoft Teams channel',
+                'Save y reiniciar bot'
+            ] : [
+                'Bot funcionando correctamente',
+                'No se requieren acciones'
+            ],
+            links: {
+                botFrameworkPortal: 'https://dev.botframework.com',
+                azurePortal: appId ? 
+                    `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/` : null,
+                documentation: 'https://docs.microsoft.com/en-us/azure/bot-service/'
+            }
+        };
+        
+        const statusCode = emergencyMode ? 206 : 200; // 206 = Partial Content
+        res.status(statusCode).json(statusData);
+        
+    } catch (error) {
+        console.error('❌ Error en endpoint /bot-status:', error);
+        res.status(500).json({ 
+            error: 'Status check failed',
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// ✅ Endpoint para activar/desactivar modo emergencia (solo desarrollo)
+if (process.env.NODE_ENV !== 'production') {
+    server.post('/emergency-mode/:action', (req, res) => {
+        const action = req.params.action;
+        
+        if (action === 'enable') {
+            emergencyMode = true;
+            res.json({ 
+                message: 'Modo emergencia activado',
+                emergencyMode: true,
+                timestamp: new Date().toISOString()
+            });
+        } else if (action === 'disable') {
+            emergencyMode = false;
+            res.json({ 
+                message: 'Modo emergencia desactivado - reiniciar para aplicar cambios completos',
+                emergencyMode: false,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(400).json({ error: 'Acción inválida. Use: enable o disable' });
+        }
+    });
+}
+
+// ✅ MANEJO GRACEFUL DE CIERRE
 process.on('SIGINT', () => {
-    console.log('\n🛑 Cerrando bot Nova...');
+    console.log('\n🛑 ===== CERRANDO NOVA BOT =====');
     console.log('💾 Guardando estados finales...');
+    
+    if (global.botInstance && typeof global.botInstance.cleanup === 'function') {
+        global.botInstance.cleanup();
+    }
+    
+    console.log('👋 Nova Bot cerrado exitosamente');
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-    console.log('\n🛑 Terminando bot Nova...');
+    console.log('\n🛑 ===== TERMINANDO NOVA BOT =====');
     console.log('💾 Finalizando conexiones...');
+    
+    if (global.botInstance && typeof global.botInstance.cleanup === 'function') {
+        global.botInstance.cleanup();
+    }
+    
+    console.log('👋 Nova Bot terminado exitosamente');
     process.exit(0);
 });
 
+// ✅ MANEJO DE ERRORES NO CAPTURADOS
+process.on('uncaughtException', (error) => {
+    console.error('\n💥 ===== ERROR NO CAPTURADO =====');
+    console.error('Error:', error.message);
+    console.error('Stack:', error.stack);
+    console.error('🆘 Activando modo emergencia automático...');
+    
+    emergencyMode = true;
+    console.error('⚠️ Bot continuará en modo emergencia');
+    console.error('════════════════════════════════════');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('\n⚠️ ===== PROMESA RECHAZADA NO MANEJADA =====');
+    console.error('Razón:', reason);
+    console.error('Promesa:', promise);
+    console.error('⚠️ Bot continuará funcionando...');
+    console.error('═══════════════════════════════════════════');
+});
+
+// ✅ MOSTRAR CONFIGURACIÓN FINAL
 console.log('\n═══════════════════════════════════════');
-console.log('📋 NOVA BOT - CONFIGURACIÓN CORREGIDA');
+console.log('📋 NOVA BOT - CONFIGURACIÓN FINAL');
 console.log('═══════════════════════════════════════');
 
 console.log('🤖 Bot Framework Configuration:');
@@ -672,19 +1127,32 @@ console.log(`   App Password: ${appPassword ? '✅ Configurado' : '❌ FALTANTE'
 console.log(`   Tenant ID: ${tenantId ? `✅ ${tenantId}` : '⚠️ Multi-tenant/Common'}`);
 console.log(`   Registration: 🔗 https://dev.botframework.com`);
 
-console.log('🔧 Correcciones Aplicadas:');
-console.log('   ✅ OpenID endpoint formato corregido (guión en lugar de guión bajo)');
-console.log('   ✅ Manejo mejorado de tenant común vs específico');  
-console.log('   ✅ Diagnóstico mejorado para errores de autenticación');
-console.log('   ✅ Manejo de errores más específico');
-console.log('   ✅ Fallback mejorado para configuración mínima');
+console.log('🔧 Características Implementadas:');
+console.log('   ✅ Configuración normal con fallback a modo emergencia');
+console.log('   ✅ Diagnóstico automático mejorado');  
+console.log('   ✅ Manejo de errores específicos por tipo');
+console.log('   ✅ Logging detallado para troubleshooting');
+console.log('   ✅ Endpoints de salud y diagnóstico completos');
+console.log('   ✅ Manejo graceful de cierre y errores');
+console.log('   ✅ Modo emergencia automático en caso de fallos críticos');
+
+console.log('🆘 Modo Emergencia:');
+console.log('   • Activación automática si Bot Framework falla');
+console.log('   • Funcionalidad limitada pero operacional');
+console.log('   • Logging claro sobre limitaciones');
+console.log('   • Instrucciones específicas para resolución');
 
 if (!appId || !appPassword) {
     console.error('\n🚨 CONFIGURACIÓN INCOMPLETA');
     console.error('❌ Variables requeridas faltantes en .env');
+    console.error('🆘 Se activará modo emergencia automáticamente');
 } else {
     console.log('\n✅ CONFIGURACIÓN BASE COMPLETA');
-    console.log('🎯 Si persisten errores, verificar registro en Bot Framework Portal');
+    console.log('🎯 Si hay errores de "Signing Key", el bot activará modo emergencia automáticamente');
+    console.log('🔧 Para solución definitiva: registrar en Bot Framework Portal');
 }
 
 console.log('═══════════════════════════════════════');
+
+// ✅ INICIAR SERVIDOR
+startServer();

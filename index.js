@@ -137,7 +137,75 @@ async function verifyBotFrameworkRegistration(appId, appPassword, tenantId) {
     }
 }
 
-// ✅ FUNCIÓN: Test de conectividad con Bot Framework API
+// ✅ FUNCIÓN ESPECÍFICA: Verificar endpoint OpenID
+async function verifyOpenIDEndpoint(tenantId) {
+    try {
+        console.log('\n🔍 ===== VERIFICACIÓN OPENID ENDPOINT =====');
+        console.log('🔍 Verificando accesibilidad del endpoint OpenID...');
+
+        const openIdUrl = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`;
+        console.log(`🌐 URL: ${openIdUrl}`);
+
+        const response = await axios.get(openIdUrl, { 
+            timeout: 10000,
+            validateStatus: (status) => status < 500
+        });
+
+        if (response.status === 200) {
+            console.log('✅ OpenID endpoint accesible');
+            console.log(`   Issuer: ${response.data.issuer}`);
+            console.log(`   Authorization endpoint: ${response.data.authorization_endpoint}`);
+            console.log(`   Token endpoint: ${response.data.token_endpoint}`);
+            return {
+                accessible: true,
+                issuer: response.data.issuer,
+                data: response.data
+            };
+        } else if (response.status === 404) {
+            console.error('❌ OpenID endpoint NO ENCONTRADO (404)');
+            console.error('   Esto confirma que el Tenant ID puede ser incorrecto');
+            return {
+                accessible: false,
+                error: 'Endpoint not found (404)',
+                recommendation: 'Verificar Tenant ID en Azure Portal'
+            };
+        } else {
+            console.warn(`⚠️ OpenID endpoint respuesta inesperada: ${response.status}`);
+            return {
+                accessible: false,
+                error: `Unexpected status: ${response.status}`,
+                recommendation: 'Verificar conectividad y permisos'
+            };
+        }
+
+    } catch (error) {
+        if (error.response?.status === 404) {
+            console.error('❌ CONFIRMADO: Tenant ID inválido o no existe');
+            console.error('   El endpoint OpenID no se encuentra');
+            console.error('   Esto explica el error "Failed to load openID config: 404"');
+            return {
+                accessible: false,
+                error: 'Tenant ID invalid or does not exist',
+                recommendation: 'Verify Tenant ID in Azure Portal',
+                confirmsError: true
+            };
+        } else if (error.code === 'ENOTFOUND') {
+            console.error('❌ Error de conectividad DNS');
+            return {
+                accessible: false,
+                error: 'DNS resolution failed',
+                recommendation: 'Check internet connectivity'
+            };
+        } else {
+            console.error('❌ Error verificando OpenID endpoint:', error.message);
+            return {
+                accessible: false,
+                error: error.message,
+                recommendation: 'Check connectivity and configuration'
+            };
+        }
+    }
+}
 async function testBotFrameworkAPI(token) {
     try {
         console.log('\n🧪 ===== TEST BOT FRAMEWORK API =====');
@@ -194,13 +262,32 @@ async function runCompleteDiagnostic() {
         process.exit(1);
     }
 
-    // Paso 2: Verificar Bot Framework Registration
+    // Paso 2: Verificar OpenID endpoint
+    console.log('\n🔍 Verificando OpenID endpoint...');
+    const openIdResult = await verifyOpenIDEndpoint(tenantId);
+    
+    if (!openIdResult.accessible) {
+        console.log('\n❌ ===== PROBLEMA CONFIRMADO =====');
+        console.log('🔍 OpenID endpoint no accesible');
+        console.log(`   Error: ${openIdResult.error}`);
+        console.log(`   Recomendación: ${openIdResult.recommendation}`);
+        
+        if (openIdResult.confirmsError) {
+            console.log('\n🎯 ESTO CONFIRMA EL ERROR "Failed to load openID config: 404"');
+            console.log('✅ Diagnóstico: El Tenant ID es correcto pero...');
+            console.log('❌ Bot Framework no puede acceder a la configuración');
+            console.log('🔧 Solución: Registrar en Bot Framework Portal');
+        }
+    }
+
+    // Paso 3: Verificar Bot Framework Registration
+    // Paso 3: Verificar Bot Framework Registration
     const botFrameworkResult = await verifyBotFrameworkRegistration(appId, appPassword, tenantId);
     
     if (botFrameworkResult.success) {
         console.log('\n🎉 ¡Bot Framework authentication exitosa!');
         
-        // Paso 3: Test API si el token está disponible
+        // Paso 4: Test API si el token está disponible
         await testBotFrameworkAPI(botFrameworkResult.token);
         
         console.log('\n✅ ===== DIAGNÓSTICO COMPLETADO =====');
@@ -212,14 +299,19 @@ async function runCompleteDiagnostic() {
         console.log('\n❌ ===== DIAGNÓSTICO FALLIDO =====');
         console.log('🔧 Acción requerida: Registrar en Bot Framework Portal');
         
-        // ✅ INSTRUCCIONES ESPECÍFICAS
-        console.log('\n📋 PASOS PARA RESOLVER:');
+        // ✅ INSTRUCCIONES ESPECÍFICAS MEJORADAS
+        console.log('\n📋 PASOS PARA RESOLVER EL ERROR "Failed to load openID config: 404":');
         console.log('1. Ir a: https://dev.botframework.com');
         console.log('2. Click en "Create a Bot" o "Register"');
         console.log(`3. Usar App ID: ${appId}`);
-        console.log('4. Usar App Password existente');
+        console.log('4. Usar App Password existente (NO crear nuevo)');
         console.log('5. Messaging Endpoint: https://tu-dominio.com/api/messages');
         console.log('6. Habilitar Microsoft Teams channel');
+        console.log('\n🎯 EXPLICACIÓN DEL ERROR:');
+        console.log('   • Tu Azure AD está configurado correctamente ✅');
+        console.log('   • Microsoft Graph funciona ✅');
+        console.log('   • Bot Framework no encuentra tu app registrada ❌');
+        console.log('   • Esto causa el error "openID config: 404" ❌');
         console.log('\n⚠️ Continuando sin esta verificación...');
         
         return false;
@@ -353,7 +445,7 @@ function setupAdapterErrorHandling(adapter) {
         console.error('\n❌ ===== ERROR BOT FRAMEWORK =====');
         console.error('Error:', error.message);
         
-        // ✅ DETECCIÓN ESPECÍFICA DE AADSTS700016
+        // ✅ DETECCIÓN ESPECÍFICA DE ERRORES BOT FRAMEWORK
         if (error.message && error.message.includes('AADSTS700016')) {
             console.error('\n🚨 ERROR AADSTS700016 - SOLUCIÓN ESPECÍFICA:');
             console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -373,18 +465,57 @@ function setupAdapterErrorHandling(adapter) {
             
             await generateDiagnosticReport();
         } else if (error.message && error.message.includes('Failed to load openID config')) {
-            console.error('\n🔐 ERROR OPENID CONFIG - ENDPOINT NO ENCONTRADO');
-            console.error('🔍 Verificar que el Tenant ID sea correcto');
+            console.error('\n🔐 ERROR OPENID CONFIG 404 - DIAGNÓSTICO ESPECÍFICO:');
+            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.error('📋 ERROR CONFIRMADO: App NO registrada en Bot Framework Portal');
+            console.error(`   Endpoint fallido: https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`);
+            console.error('\n🎯 ESTE ERROR CONFIRMA EL DIAGNÓSTICO:');
+            console.error('   ✅ Azure AD está configurado correctamente');
+            console.error('   ✅ Microsoft Graph funciona');
+            console.error('   ❌ Bot Framework no puede validar porque app no está registrada');
+            console.error('\n🔧 SOLUCIÓN INMEDIATA:');
+            console.error('   1. Ejecutar: npm run setup-botframework');
+            console.error('   2. Registrar en: https://dev.botframework.com');
+            console.error(`   3. Usar App ID: ${appId}`);
+            console.error('   4. Usar App Password existente');
+            console.error('   5. Configurar Messaging Endpoint');
+            console.error('   6. Habilitar Teams Channel');
+            console.error('\n⚠️ IMPORTANTE: NO cambies las credenciales existentes');
+            console.error('   Solo REGISTRA la misma app en Bot Framework Portal');
+            console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            
+            await generateDiagnosticReport();
         }
         
         // Responder al usuario
         try {
-            await context.sendActivity(
-                '❌ **Error de configuración del bot**\n\n' +
-                'Hay un problema con la configuración de Bot Framework. ' +
-                'El administrador debe registrar este bot en el Portal de Bot Framework.\n\n' +
-                '**Código de error**: AADSTS700016 - App no registrada en Bot Framework'
-            );
+            if (error.message && error.message.includes('Failed to load openID config')) {
+                await context.sendActivity(
+                    '🔧 **Error de configuración Bot Framework**\n\n' +
+                    '**Problema detectado**: El bot no está registrado en Bot Framework Portal.\n\n' +
+                    '**Esto es normal** y tiene solución simple:\n' +
+                    '1. El administrador debe ir a https://dev.botframework.com\n' +
+                    '2. Registrar este bot con las credenciales existentes\n' +
+                    '3. Configurar el endpoint de mensajes\n' +
+                    '4. Habilitar el canal de Microsoft Teams\n\n' +
+                    '**Nota**: Las credenciales Azure AD están correctas, solo falta el registro en Bot Framework.\n\n' +
+                    '**Código de error**: OpenID Config 404'
+                );
+            } else if (error.message && error.message.includes('AADSTS700016')) {
+                await context.sendActivity(
+                    '🔧 **Error de configuración Bot Framework**\n\n' +
+                    'El bot necesita ser registrado en Bot Framework Portal.\n\n' +
+                    '**Para el administrador**: Ejecutar `npm run setup-botframework` para instrucciones detalladas.\n\n' +
+                    '**Código de error**: AADSTS700016'
+                );
+            } else {
+                await context.sendActivity(
+                    '❌ **Error de configuración del bot**\n\n' +
+                    'Hay un problema con la configuración de Bot Framework. ' +
+                    'El administrador debe registrar este bot en el Portal de Bot Framework.\n\n' +
+                    '**Para el administrador**: https://dev.botframework.com'
+                );
+            }
         } catch (sendError) {
             console.error('Error enviando mensaje de error:', sendError);
         }

@@ -260,7 +260,7 @@ const server = restify.createServer({
 server.use(restify.plugins.bodyParser());
 
 // ✅ MIDDLEWARE PARA LOGGING
-server.use((req, res, next) => {
+server.use((req, res) => {
     try {
         const timestamp = new Date().toISOString();
         console.log(`📡 [${timestamp}] ${req.method} ${req.url}`);
@@ -810,7 +810,7 @@ async function startServer() {
 
 // ✅ ENDPOINTS DE SALUD Y DIAGNÓSTICO MEJORADOS
 
-server.get('/health', async (req, res, next) => {
+server.get('/health', async (req, res) => {
     try {
         let botFrameworkStatus = 'unknown';
         
@@ -894,7 +894,7 @@ server.get('/health', async (req, res, next) => {
     }
 });
 
-server.get('/diagnostic', async (req, res, next) => {
+server.get('/diagnostic', async (req, res) => {
     try {
         let cosmosStats = null;
         if (cosmosService.isAvailable()) {
@@ -998,7 +998,7 @@ server.get('/diagnostic', async (req, res, next) => {
 });
 
 // ✅ NUEVO: Endpoint específico de estado del bot
-server.get('/bot-status', async (req, res, next) => {
+server.get('/bot-status', async (req, res) => {
     try {
         const statusData = {
             timestamp: new Date().toISOString(),
@@ -1059,7 +1059,7 @@ server.get('/bot-status', async (req, res, next) => {
 
 // ✅ Endpoint para activar/desactivar modo emergencia (solo desarrollo)
 if (process.env.NODE_ENV !== 'production') {
-    server.post('/emergency-mode/:action', (req, res, next) => {
+    server.post('/emergency-mode/:action', (req, res) => {
         try {
             const action = req.params.action;
             

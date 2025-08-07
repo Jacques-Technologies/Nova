@@ -1,59 +1,69 @@
-// index.js
-const path = require('path');
-const restify = require('restify');
 require('dotenv').config();
-
+const restify = require('restify');
 const {
-  BotFrameworkAdapter,
+  CloudAdapter,
+  ConfigurationBotFrameworkAuthentication,
   MemoryStorage,
   ConversationState,
   UserState
 } = require('botbuilder');
-
 const { TeamsBot } = require('./bots/teamsBot');
-// Importar instancias de servicios (exportadas directamente)
-const cosmos = require('./services/cosmosService');
-const documentSvc = require('./services/documentService');
+const cosmosService = require('./services/cosmosService');
+const documentService = require('./services/documentService');
 
-// Cargar configuración de entorno
-// Variables de entorno esperadas: MicrosoftAppId, MicrosoftAppPassword, MicrosoftAppTenantId
-const appId = process.env.MicrosoftAppId || '';
-const appPassword = process.env.MicrosoftAppPassword || '';
-const tenantId = process.env.MicrosoftAppTenantId || '';
+// The Azure Bot Service deprecated support for creating new multi‑tenant bots after
+// July 31 2025.  To comply with the new single‑tenant requirement the adapter
+// has been updated to use CloudAdapter with ConfigurationBotFrameworkAuthentication.
+//
+// When running this bot you must provide the following environment variables:
+//   MicrosoftAppId       – The Application (client) ID for your bot registration
+//   MicrosoftAppPassword – The client secret for your bot registration
+//   MicrosoftAppTenantId – The tenant ID where your bot is registered
+//   MicrosoftAppType     – Should be set to "SingleTenant" (defaulted below)
+// See the Microsoft documentation for more details: https://learn.microsoft.com/azure/bot-service/bot-builder-authentication#to-update-your-app-service
+
 const PORT = process.env.PORT || 3978;
 
-// Iniciar servidor HTTP Restify
-global.console.log('🤖 Nova Bot (SingleTenant) iniciando...');
-const server = restify.createServer();
-server.listen(PORT, () => {
-  console.log(`🚀 Servidor escuchando en ${server.url}`);
+// Create a BotFrameworkAuthentication instance using environment variables.  If
+// MicrosoftAppType is not explicitly set it defaults to SingleTenant.  This
+// object encapsulates all of the authentication endpoints required for the
+// CloudAdapter and eliminates the need to manually set channelAuthTenant,
+// oAuthEndpoint or openIdMetadata.
+const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication({
+  MicrosoftAppId: process.env.MicrosoftAppId,
+  MicrosoftAppPassword: process.env.MicrosoftAppPassword,
+  MicrosoftAppType: process.env.MicrosoftAppType || 'SingleTenant',
+  MicrosoftAppTenantId: process.env.MicrosoftAppTenantId
 });
 
-// Configurar adaptador para Single-Tenant de Azure AD
-const adapter = new BotFrameworkAdapter({
-  appId,
-  appPassword,
-  openIdMetadata: `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`
-});
+// Instantiate the CloudAdapter which replaces the deprecated BotFrameworkAdapter.
+const adapter = new CloudAdapter(botFrameworkAuthentication);
 
-// Manejo global de errores
+// Global error handler to catch any unhandled errors.  Without this your bot
+// may fail silently and return a 500 status code.
 adapter.onTurnError = async (context, error) => {
-  console.error(`[onTurnError]: ${error}`);
-  await context.sendActivity('Lo siento, se produjo un error inesperado.');
+  console.error('❌ Turn error:', error);
+  await context.sendActivity('Lo siento, ocurrió un error procesando tu solicitud.');
 };
 
-// Configurar almacenamiento y estado
-const memoryStorage = new MemoryStorage();
-const conversationState = new ConversationState(memoryStorage);
-const userState = new UserState(memoryStorage);
+const storage           = new MemoryStorage();
+const conversationState = new ConversationState(storage);
+const userState         = new UserState(storage);
+const bot               = new TeamsBot(conversationState, userState);
 
-// Crear instancia del bot con estados y servicios
-const bot = new TeamsBot(conversationState, userState, cosmos, documentSvc);
+const server = restify.createServer();
+server.use(restify.plugins.bodyParser());
 
-// Ruta de mensajes entrantes
-global.console.log('🔗 Conectando endpoint /api/messages');
 server.post('/api/messages', async (req, res) => {
-  await adapter.processActivity(req, res, async (context) => {
-    await bot.run(context);
-  });
+  await adapter.process(req, res, (context) => bot.run(context));
+});
+
+// **Aquí viene el cambio**: handler async con 2 args
+server.get('/health', async (req, res) => {
+  res.send(200, { status: 'OK' });
+});
+
+server.listen(PORT, () => {
+  console.log(`🚀 Nova Bot escuchando en puerto ${PORT}`);
+  console.log(`📨 Messaging endpoint: http://localhost:${PORT}/api/messages`);
 });

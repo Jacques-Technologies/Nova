@@ -260,7 +260,7 @@ const server = restify.createServer({
 server.use(restify.plugins.bodyParser());
 
 // ✅ MIDDLEWARE PARA LOGGING
-server.use((req, res) => {
+server.use((req, res, next) => {
     try {
         const timestamp = new Date().toISOString();
         console.log(`📡 [${timestamp}] ${req.method} ${req.url}`);

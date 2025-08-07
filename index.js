@@ -11,8 +11,44 @@ const {
 } = require('botbuilder');
 
 const { TeamsBot } = require('./bots/teamsBot');
-// Importar instancia de servicio de CosmosDB (ya inicializada)
+// Importar instancia de CosmosDB (ya inicializada)
 const cosmos = require('./services/cosmosService');
+// Importar clase y crear instancia de DocumentService
+const DocumentService = require('./services/documentService');
+
+// Cargar configuración de entorno
+// Variables de entorno esperadas: MicrosoftAppId, MicrosoftAppPassword, MicrosoftAppTenantId
+const appId = process.env.MicrosoftAppId || '';
+const appPassword = process.env.MicrosoftAppPassword || '';
+const tenantId = process.env.MicrosoftAppTenantId || '';
+const PORT = process.env.PORT || 3978;
+
+// Iniciar servidor HTTP Restify
+global.console.log('🤖 Nova Bot (SingleTenant) iniciando...');
+const server = restify.createServer();
+server.listen(PORT, () => {
+    console.log(`🚀 Servidor escuchando en ${server.url}`);
+});
+
+// Configurar adaptador para Single-Tenant de Azure AD
+const adapter = new BotFrameworkAdapter({
+    appId: appId,
+    appPassword: appPassword,
+    openIdMetadata: `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`
+});
+
+// Manejo global de errores
+adapter.onTurnError = async (context, error) => {
+    console.error(`[onTurnError]: ${error}`);
+    await context.sendActivity('Lo siento, se produjo un error inesperado.');
+};
+
+// Configurar almacenamiento y estado
+const memoryStorage = new MemoryStorage();
+const conversationState = new ConversationState(memoryStorage);
+const userState = new UserState(memoryStorage);
+
+// Inicializar servicios auxiliares
 const documentSvc = new DocumentService();
 
 // Crear instancia del bot

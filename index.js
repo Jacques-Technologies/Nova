@@ -261,20 +261,25 @@ server.use(restify.plugins.bodyParser());
 
 // ✅ MIDDLEWARE PARA LOGGING
 server.use((req, res, next) => {
-    const timestamp = new Date().toISOString();
-    console.log(`📡 [${timestamp}] ${req.method} ${req.url}`);
-    
-    // Logging específico para mensajes del bot
-    if (req.url === '/api/messages') {
-        console.log('📨 Bot message incoming:', {
-            method: req.method,
-            contentType: req.headers['content-type'],
-            authorization: req.headers.authorization ? 'Present' : 'Missing',
-            userAgent: req.headers['user-agent']
-        });
+    try {
+        const timestamp = new Date().toISOString();
+        console.log(`📡 [${timestamp}] ${req.method} ${req.url}`);
+        
+        // Logging específico para mensajes del bot
+        if (req.url === '/api/messages') {
+            console.log('📨 Bot message incoming:', {
+                method: req.method,
+                contentType: req.headers['content-type'],
+                authorization: req.headers.authorization ? 'Present' : 'Missing',
+                userAgent: req.headers['user-agent']
+            });
+        }
+        
+        return next();
+    } catch (error) {
+        console.error('❌ Error en middleware de logging:', error);
+        return next();
     }
-    
-    next();
 });
 
 // ✅ FUNCIÓN DE INICIALIZACIÓN COMPLETA CORREGIDA
@@ -805,7 +810,7 @@ async function startServer() {
 
 // ✅ ENDPOINTS DE SALUD Y DIAGNÓSTICO MEJORADOS
 
-server.get('/health', async (req, res) => {
+server.get('/health', async (req, res, next) => {
     try {
         let botFrameworkStatus = 'unknown';
         
@@ -877,6 +882,7 @@ server.get('/health', async (req, res) => {
         
         const statusCode = emergencyMode ? 206 : 200; // 206 = Partial Content
         res.status(statusCode).json(healthData);
+        return next();
         
     } catch (error) {
         console.error('❌ Error en endpoint /health:', error);
@@ -884,10 +890,11 @@ server.get('/health', async (req, res) => {
             error: 'Health check failed',
             timestamp: new Date().toISOString()
         });
+        return next();
     }
 });
 
-server.get('/diagnostic', async (req, res) => {
+server.get('/diagnostic', async (req, res, next) => {
     try {
         let cosmosStats = null;
         if (cosmosService.isAvailable()) {
@@ -977,6 +984,7 @@ server.get('/diagnostic', async (req, res) => {
         };
         
         res.json(diagnosticData);
+        return next();
         
     } catch (error) {
         console.error('❌ Error en endpoint /diagnostic:', error);
@@ -985,11 +993,12 @@ server.get('/diagnostic', async (req, res) => {
             message: error.message,
             timestamp: new Date().toISOString()
         });
+        return next();
     }
 });
 
 // ✅ NUEVO: Endpoint específico de estado del bot
-server.get('/bot-status', (req, res) => {
+server.get('/bot-status', async (req, res, next) => {
     try {
         const statusData = {
             timestamp: new Date().toISOString(),
@@ -1036,6 +1045,7 @@ server.get('/bot-status', (req, res) => {
         
         const statusCode = emergencyMode ? 206 : 200; // 206 = Partial Content
         res.status(statusCode).json(statusData);
+        return next();
         
     } catch (error) {
         console.error('❌ Error en endpoint /bot-status:', error);
@@ -1043,30 +1053,38 @@ server.get('/bot-status', (req, res) => {
             error: 'Status check failed',
             timestamp: new Date().toISOString()
         });
+        return next();
     }
 });
 
 // ✅ Endpoint para activar/desactivar modo emergencia (solo desarrollo)
 if (process.env.NODE_ENV !== 'production') {
-    server.post('/emergency-mode/:action', (req, res) => {
-        const action = req.params.action;
-        
-        if (action === 'enable') {
-            emergencyMode = true;
-            res.json({ 
-                message: 'Modo emergencia activado',
-                emergencyMode: true,
-                timestamp: new Date().toISOString()
-            });
-        } else if (action === 'disable') {
-            emergencyMode = false;
-            res.json({ 
-                message: 'Modo emergencia desactivado - reiniciar para aplicar cambios completos',
-                emergencyMode: false,
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            res.status(400).json({ error: 'Acción inválida. Use: enable o disable' });
+    server.post('/emergency-mode/:action', (req, res, next) => {
+        try {
+            const action = req.params.action;
+            
+            if (action === 'enable') {
+                emergencyMode = true;
+                res.json({ 
+                    message: 'Modo emergencia activado',
+                    emergencyMode: true,
+                    timestamp: new Date().toISOString()
+                });
+            } else if (action === 'disable') {
+                emergencyMode = false;
+                res.json({ 
+                    message: 'Modo emergencia desactivado - reiniciar para aplicar cambios completos',
+                    emergencyMode: false,
+                    timestamp: new Date().toISOString()
+                });
+            } else {
+                res.status(400).json({ error: 'Acción inválida. Use: enable o disable' });
+            }
+            return next();
+        } catch (error) {
+            console.error('❌ Error en emergency-mode endpoint:', error);
+            res.status(500).json({ error: 'Internal server error' });
+            return next();
         }
     });
 }

@@ -532,48 +532,80 @@ class CosmosService {
      * Obtiene estadísticas de Cosmos DB
      */
     async getStats() {
-        try {
-            if (!this.cosmosAvailable) {
-                return {
-                    available: false,
-                    error: this.initializationError
-                };
-            }
-
-            // Consulta para obtener estadísticas básicas
-            const statsQuery = {
-                query: `
-                    SELECT 
-                        COUNT(1) as totalDocuments,
-                        COUNT(CASE WHEN c.documentType = 'conversation_info' THEN 1 END) as conversations,
-                        COUNT(CASE WHEN c.messageType = 'user' THEN 1 END) as userMessages,
-                        COUNT(CASE WHEN c.messageType = 'bot' THEN 1 END) as botMessages
-                    FROM c
-                `
-            };
-
-            const { resources: stats } = await this.container.items
-                .query(statsQuery)
-                .fetchAll();
-
-            return {
-                available: true,
-                initialized: this.initialized,
-                database: this.databaseId,
-                container: this.containerId,
-                partitionKey: this.partitionKey,
-                stats: stats[0] || {},
-                timestamp: DateTime.now().setZone('America/Mexico_City').toISO()
-            };
-
-        } catch (error) {
-            console.error('❌ Error obteniendo estadísticas de Cosmos DB:', error);
+    try {
+        if (!this.cosmosAvailable) {
             return {
                 available: false,
-                error: error.message
+                error: this.initializationError
             };
         }
+
+        const statsResults = {
+            totalDocuments: 0,
+            conversations: 0,
+            userMessages: 0,
+            botMessages: 0,
+            systemMessages: 0
+        };
+
+        const queries = [
+            {
+                label: 'totalDocuments',
+                query: 'SELECT VALUE COUNT(1) FROM c'
+            },
+            {
+                label: 'conversations',
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.documentType = 'conversation_info'"
+            },
+            {
+                label: 'userMessages',
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'user'"
+            },
+            {
+                label: 'botMessages',
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'bot'"
+            },
+            {
+                label: 'systemMessages',
+                query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'system'"
+            }
+        ];
+
+        for (const q of queries) {
+            try {
+                const { resources } = await this.container.items.query({ query: q.query }).fetchAll();
+                statsResults[q.label] = resources[0] || 0;
+            } catch (error) {
+                console.warn(`⚠️ Error ejecutando query "${q.label}":`, error.message);
+                statsResults[q.label] = 'ERROR';
+            }
+        }
+
+        return {
+            available: true,
+            initialized: this.initialized,
+            database: this.databaseId,
+            container: this.containerId,
+            partitionKey: this.partitionKey,
+            stats: {
+                ...statsResults,
+                totalMessages:
+                    (typeof statsResults.userMessages === 'number' ? statsResults.userMessages : 0) +
+                    (typeof statsResults.botMessages === 'number' ? statsResults.botMessages : 0) +
+                    (typeof statsResults.systemMessages === 'number' ? statsResults.systemMessages : 0)
+            },
+            timestamp: DateTime.now().setZone('America/Mexico_City').toISO()
+        };
+
+    } catch (error) {
+        console.error('❌ Error obteniendo estadísticas de Cosmos DB:', error);
+        return {
+            available: false,
+            error: error.message
+        };
     }
+}
+
 
     /**
      * Genera un ID único para mensaje

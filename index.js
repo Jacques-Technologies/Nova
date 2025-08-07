@@ -1,4 +1,4 @@
-// index.js - SOLUCION COMPLETA para AADSTS700016 y OpenID 404
+// index.js - SOLUCION CORREGIDA: Solo MemoryStorage + cosmosService personalizado
 const path = require('path');
 const restify = require('restify');
 const axios = require('axios');
@@ -8,7 +8,8 @@ const {
     ConversationState, 
     UserState   
 } = require('botbuilder');
-const { CosmosDbStorage } = require('botbuilder-azure');
+// ✅ REMOVIDO: const { CosmosDbStorage } = require('botbuilder-azure');
+
 // Importar servicios
 const { TeamsBot } = require('./bots/teamsBot');
 const cosmosService = require('./services/cosmosService');
@@ -109,7 +110,7 @@ server.use(restify.plugins.bodyParser());
 server.listen(process.env.port || process.env.PORT || 3978, () => {
     console.log(`\n${server.name} listening on ${server.url}`);
     console.log('✅ Bot Nova iniciado con configuración Azure AD correcta');
-    console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Memoria temporal'}`);
+    console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB (cosmosService)' : 'Memoria temporal'}`);
 });
 
 // ✅ DECLARACIÓN DE VARIABLES DE ALMACENAMIENTO
@@ -117,31 +118,22 @@ let storage;
 let conversationState;
 let userState;
 
-// ✅ PASO 5: INICIALIZAR ALMACENAMIENTO Y BOT FRAMEWORK
+// ✅ PASO 5: INICIALIZAR ALMACENAMIENTO SIMPLIFICADO
 async function initializeBot() {
     console.log('📦 Inicializando almacenamiento...');
     
     try {
-        if (cosmosService.isAvailable()) {
-    console.log('🌐 Configurando Cosmos DB Storage...');
-
-    storage = new CosmosDbStorage({
-        serviceEndpoint: process.env.COSMOS_DB_ENDPOINT,
-        authKey: process.env.COSMOS_DB_KEY,
-        databaseId: process.env.COSMOS_DB_DATABASE_ID,
-        containerId: process.env.COSMOS_DB_CONTAINER_ID
-    });
-
-    console.log('✅ Cosmos DB Storage configurado exitosamente');
-
-} else {
-    console.warn('⚠️ Cosmos DB no disponible, usando MemoryStorage como fallback');
-    storage = new MemoryStorage();
-}       
+        // ✅ SOLUCIÓN: Usar siempre MemoryStorage para el Bot Framework
+        // La persistencia real se maneja por cosmosService.js
+        console.log('💾 Configurando MemoryStorage para Bot Framework...');
+        console.log('ℹ️ La persistencia de conversaciones se maneja por cosmosService.js');
+        
+        storage = new MemoryStorage();
         conversationState = new ConversationState(storage);
         userState = new UserState(storage);
         
-        console.log(`✅ Estados inicializados con ${cosmosService.isAvailable() ? 'Cosmos DB' : 'MemoryStorage'}`);
+        console.log('✅ Estados del Bot Framework inicializados con MemoryStorage');
+        console.log(`📊 Persistencia de datos: ${cosmosService.isAvailable() ? 'Cosmos DB (cosmosService)' : 'Solo memoria'}`);
 
         // ✅ CONFIGURAR ADAPTER DESPUÉS DE STORAGE
         console.log('\n🔐 Configurando Bot Framework Adapter...');
@@ -204,15 +196,15 @@ async function initializeBot() {
         console.log('🎯 Bot listo para recibir mensajes');
         
     } catch (error) {
-        console.error('❌ Error inicializando almacenamiento:', error.message);
+        console.error('❌ Error inicializando bot:', error.message);
         
-        // Fallback a MemoryStorage
+        // En caso de cualquier error, usar MemoryStorage básico
+        console.log('🔄 Inicializando con configuración mínima...');
+        
         storage = new MemoryStorage();
         conversationState = new ConversationState(storage);
         userState = new UserState(storage);
-        console.log('✅ MemoryStorage configurado como fallback');
         
-        // Continuar con la configuración del bot
         const adapter = new BotFrameworkAdapter({
             appId: appId,
             appPassword: appPassword
@@ -230,7 +222,7 @@ async function initializeBot() {
             }
         });
         
-        console.log('🎯 Bot listo para recibir mensajes (con fallback)');
+        console.log('⚠️ Bot iniciado con configuración mínima');
     }
 }
 
@@ -378,7 +370,7 @@ server.get('/health', (req, res, next) => {
         res.json({
             status: 'OK',
             timestamp: new Date().toISOString(),
-            bot: 'Nova Bot con Diagnóstico Azure AD',
+            bot: 'Nova Bot con MemoryStorage + CosmosService',
             azureAdConfig: {
                 appId: appId ? 'Configurado' : 'Faltante',
                 appPassword: appPassword ? 'Configurado' : 'Faltante',
@@ -398,11 +390,13 @@ server.get('/health', (req, res, next) => {
                 openai: !!process.env.OPENAI_API_KEY,
                 cosmosDB: cosmosInfo.available,
                 azureSearch: documentInfo.searchAvailable,
-                persistencia: cosmosInfo.available ? 'Cosmos DB' : 'Memoria temporal',
-                documentSearch: documentInfo.searchAvailable ? 'Azure Search con vectores' : 'No disponible'
+                persistencia: cosmosInfo.available ? 'Cosmos DB (cosmosService)' : 'Memoria temporal',
+                documentSearch: documentInfo.searchAvailable ? 'Azure Search con vectores' : 'No disponible',
+                botFrameworkStorage: 'MemoryStorage'
             },
             storage: {
-                type: cosmosInfo.available ? 'CosmosDB' : 'Memory',
+                botFramework: 'MemoryStorage',
+                conversations: cosmosInfo.available ? 'CosmosDB (cosmosService)' : 'Memory',
                 database: cosmosInfo.database,
                 container: cosmosInfo.container,
                 available: cosmosInfo.available,
@@ -537,7 +531,8 @@ server.get('/diagnostic', async (req, res) => {
                 tenantValue: process.env.MicrosoftAppTenantId || 'No configurado - CRÍTICO'
             },
             storage: {
-                type: cosmosService.isAvailable() ? 'CosmosDB' : 'Memory',
+                botFramework: 'MemoryStorage',
+                conversations: cosmosService.isAvailable() ? 'CosmosDB (cosmosService)' : 'Memory',
                 config: cosmosService.getConfigInfo(),
                 stats: cosmosStats
             },
@@ -629,9 +624,9 @@ process.on('SIGTERM', () => {
     process.exit(0);
 });
 
-// ✅ INFORMACIÓN FINAL CON DIAGNÓSTICO AZURE AD
+// ✅ INFORMACIÓN FINAL CON CONFIGURACIÓN CORREGIDA
 console.log('\n═══════════════════════════════════════');
-console.log('📋 CONFIGURACIÓN NOVA BOT - DIAGNÓSTICO COMPLETO');
+console.log('📋 CONFIGURACIÓN NOVA BOT - STORAGE CORREGIDO');
 console.log('═══════════════════════════════════════');
 
 console.log('🔐 Azure AD Bot Framework:');
@@ -639,6 +634,11 @@ console.log(`   App ID: ${appId ? '✅ Configurado' : '❌ FALTANTE'}`);
 console.log(`   App Password: ${appPassword ? '✅ Configurado' : '❌ FALTANTE'}`);
 console.log(`   Tenant ID: ${tenantId ? '✅ Configurado' : '❌ FALTANTE - CAUSA AADSTS700016'}`);
 console.log(`   Channel Auth Tenant: ${tenantId ? '✅ Configurado' : '❌ FALTANTE'}`);
+
+console.log('💾 Storage Configuration:');
+console.log('   Bot Framework: MemoryStorage (para estados del bot)');
+console.log(`   Conversaciones: ${cosmosService.isAvailable() ? 'Cosmos DB (cosmosService personalizado)' : 'Solo memoria'}`);
+console.log('   Documentos: Azure Search + embeddings vectoriales');
 
 if (appId) {
     console.log(`   Azure Portal: https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/`);
@@ -650,7 +650,7 @@ console.log('🤖 OpenAI: ' + (process.env.OPENAI_API_KEY ? '✅ Configurado' : 
 
 // Información de servicios
 if (process.env.COSMOS_DB_ENDPOINT) {
-    console.log('💾 Cosmos DB: ✅ Configurado');
+    console.log('💾 Cosmos DB: ✅ Configurado (cosmosService personalizado)');
     console.log(`   Estado: ${cosmosService.isAvailable() ? '🟢 Disponible' : '🔴 Error de conexión'}`);
 } else {
     console.log('💾 Cosmos DB: ❌ No configurado (usando MemoryStorage)');
@@ -678,5 +678,6 @@ if (!tenantId) {
     console.error('El error AADSTS700016 seguirá ocurriendo sin MicrosoftAppTenantId');
     console.error('Agrega el Tenant ID al archivo .env y reinicia el bot');
 } else {
-    console.log('\n✅ CONFIGURACIÓN AZURE AD COMPLETA - Bot listo para funcionar\n');
+    console.log('\n✅ CONFIGURACIÓN AZURE AD COMPLETA - Bot listo para funcionar');
+    console.log('✅ STORAGE CORREGIDO - MemoryStorage + CosmosService personalizado\n');
 }

@@ -191,9 +191,6 @@ async function runCompleteDiagnostic() {
     if (!appId || !appPassword || !tenantId) {
         console.error('❌ Variables críticas faltantes');
         console.error('\n📋 Agregar a .env:');
-        console.error('MicrosoftAppId=');
-        console.error('MicrosoftAppPassword=');
-        console.error('MicrosoftAppTenantId=');
         process.exit(1);
     }
 
@@ -456,8 +453,8 @@ initializeBot().then(() => {
 
 // ✅ ENDPOINTS DE DIAGNÓSTICO MEJORADOS
 
-// Endpoint de salud con verificación Bot Framework
-server.get('/health', async (req, res, next) => {
+// ✅ CORREGIDO: Endpoint de salud con verificación Bot Framework
+server.get('/health', async (req, res) => {
     try {
         // ✅ VERIFICACIÓN ESPECÍFICA BOT FRAMEWORK
         let botFrameworkStatus = 'unknown';
@@ -509,11 +506,9 @@ server.get('/health', async (req, res, next) => {
                 config: cosmosInfo
             }
         });
-        return next();
     } catch (error) {
         console.error('❌ Error en endpoint /health:', error);
         res.status(500).json({ error: 'Internal server error' });
-        return next();
     }
 });
 

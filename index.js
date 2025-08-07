@@ -143,7 +143,13 @@ async function verifyOpenIDEndpoint(tenantId) {
         console.log('\n🔍 ===== VERIFICACIÓN OPENID ENDPOINT =====');
         console.log('🔍 Verificando accesibilidad del endpoint OpenID...');
 
-        const openIdUrl = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`;
+        // Use the correct OpenID Connect discovery document path. Azure AD publishes the
+        // OpenID Connect metadata under `.well-known/openid-configuration` (with a hyphen).
+        // The previous underscore variant (`openid_configuration`) returns a 404 and causes
+        // authentication failures such as "Failed to load openID config: 404" in single-tenant
+        // scenarios. See https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration
+        // for an example of the valid metadata endpoint.
+        const openIdUrl = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`;
         console.log(`🌐 URL: ${openIdUrl}`);
 
         const response = await axios.get(openIdUrl, { 
@@ -369,7 +375,9 @@ async function initializeBot() {
         // ✅ CONFIGURAR ENDPOINTS ESPECÍFICOS PARA BOT FRAMEWORK
         if (tenantId) {
             adapterConfig.oAuthEndpoint = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
-            adapterConfig.openIdMetadata = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`;
+            // Use the correct OIDC metadata document with hyphen (`openid-configuration`). The underscore
+            // variant is deprecated/invalid and returns 404 for single-tenant directories.
+            adapterConfig.openIdMetadata = `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`;
             console.log(`🔗 OAuth Endpoint: ${adapterConfig.oAuthEndpoint}`);
             console.log(`🔗 OpenID Metadata: ${adapterConfig.openIdMetadata}`);
         }
@@ -468,7 +476,10 @@ function setupAdapterErrorHandling(adapter) {
             console.error('\n🔐 ERROR OPENID CONFIG 404 - DIAGNÓSTICO ESPECÍFICO:');
             console.error('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
             console.error('📋 ERROR CONFIRMADO: App NO registrada en Bot Framework Portal');
-            console.error(`   Endpoint fallido: https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration`);
+            // Reflect the correct OpenID configuration URL in the diagnostic message. Using the
+            // underscore variant in the log could mislead debugging; the hyphenated form is the
+            // actual endpoint consumed by Azure AD.
+            console.error(`   Endpoint fallido: https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`);
             console.error('\n🎯 ESTE ERROR CONFIRMA EL DIAGNÓSTICO:');
             console.error('   ✅ Azure AD está configurado correctamente');
             console.error('   ✅ Microsoft Graph funciona');
@@ -617,9 +628,12 @@ server.get('/health', async (req, res) => {
                 messagingEndpoint: '/api/messages',
                 channelAuthTenant: tenantId || 'No configurado'
             },
-            azureAD: {
+                azureAD: {
                 oauthEndpoint: tenantId ? `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token` : null,
-                openIdMetadata: tenantId ? `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid_configuration` : null,
+                // Report the correct OpenID metadata endpoint in the health check. The underscore version
+                // previously used here would return a 404 for single tenant deployments, so we switch to
+                // the hyphenated form consistent with the official Azure AD discovery document.
+                openIdMetadata: tenantId ? `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration` : null,
                 azurePortalUrl: appId ? `https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/Overview/appId/${appId}/isMSAApp/` : null
             },
             features: {

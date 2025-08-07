@@ -1,50 +1,63 @@
-require('dotenv').config();
+// index.js
+const path = require('path');
 const restify = require('restify');
-const {
-  BotFrameworkAdapter,
-  MemoryStorage,
-  ConversationState,
-  UserState
+require('dotenv').config();
+
+const { 
+    BotFrameworkAdapter,
+    MemoryStorage,
+    ConversationState,
+    UserState
 } = require('botbuilder');
+
 const { TeamsBot } = require('./bots/teamsBot');
-const cosmosService = require('./services/cosmosService');
-const documentService = require('./services/documentService');
+const CosmosService = require('./services/cosmosService');
+const DocumentService = require('./services/documentService');
 
-const appId       = process.env.MicrosoftAppId;
-const appPassword = process.env.MicrosoftAppPassword;
-const tenantId    = process.env.MicrosoftAppTenantId;
-const PORT        = process.env.PORT || 3978;
+// Cargar configuración de entorno
+env:
+//   MicrosoftAppId, MicrosoftAppPassword, MicrosoftAppTenantId
+const appId = process.env.MicrosoftAppId || '';
+const appPassword = process.env.MicrosoftAppPassword || '';
+const tenantId = process.env.MicrosoftAppTenantId || '';
+const PORT = process.env.PORT || 3978;
 
-const adapter = new BotFrameworkAdapter({
-  appId,
-  appPassword,
-  channelAuthTenant: tenantId,
-  oAuthEndpoint: `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
-  openIdMetadata: `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`
+// Crear servidor HTTP Restify
+global.console.log('🤖 Nova Bot (SingleTenant) iniciando...');
+const server = restify.createServer();
+server.listen(PORT, () => {
+    console.log(`🚀 Servidor escuchando en ${server.url}`);
 });
+
+// Adaptador configurado para Single-Tenant
+const adapter = new BotFrameworkAdapter({
+    appId: appId,
+    appPassword: appPassword,
+    // Metadata de OpenID de Azure AD para tenant único
+    openIdMetadata: `https://login.microsoftonline.com/${tenantId}/v2.0/.well-known/openid-configuration`
+});
+
+// Manejo global de errores
 adapter.onTurnError = async (context, error) => {
-  console.error('❌ Turn error:', error);
-  await context.sendActivity('Lo siento, ocurrió un error procesando tu solicitud.');
+    console.error(`
+ [onTurnError]: ${error}`);
+    await context.sendActivity('Lo siento, se produjo un error inesperado.');
 };
 
-const storage           = new MemoryStorage();
-const conversationState = new ConversationState(storage);
-const userState         = new UserState(storage);
-const bot               = new TeamsBot(conversationState, userState);
+// Configurar almacenamiento y estado
+const memoryStorage = new MemoryStorage();
+const conversationState = new ConversationState(memoryStorage);
+const userState = new UserState(memoryStorage);
 
-const server = restify.createServer();
-server.use(restify.plugins.bodyParser());
+// Inicializar servicios auxiliares\const cosmos = new CosmosService();
+const documentSvc = new DocumentService();
 
+// Crear instancia del bot
+const bot = new TeamsBot(conversationState, userState, cosmos, documentSvc);
+
+// Ruta de mensajes entrantes
 server.post('/api/messages', async (req, res) => {
-  await adapter.process(req, res, (context) => bot.run(context));
-});
-
-// **Aquí viene el cambio**: handler async con 2 args
-server.get('/health', async (req, res) => {
-  res.send(200, { status: 'OK' });
-});
-
-server.listen(PORT, () => {
-  console.log(`🚀 Nova Bot escuchando en puerto ${PORT}`);
-  console.log(`📨 Messaging endpoint: http://localhost:${PORT}/api/messages`);
+    await adapter.processActivity(req, res, async (context) => {
+        await bot.run(context);
+    });
 });

@@ -5,6 +5,7 @@ const { CardFactory } = require('botbuilder');
 const axios = require('axios');
 const openaiService = require('../services/openaiService');
 const cosmosService = require('../services/cosmosService');
+const conversationService = require('../services/conversationService');
 require('dotenv').config();
 
 class TeamsBot extends DialogBot {
@@ -23,6 +24,50 @@ class TeamsBot extends DialogBot {
         
         console.log('✅ TeamsBot inicializado con Cosmos DB');
         console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB activa' : 'Solo memoria'}`);
+    }
+
+    /**
+     * Muestra el historial de conversación al usuario.
+     * Cuando el usuario escribe "historial", se presenta una lista de los últimos
+     * 5 mensajes de la conversación actual. Se utiliza Cosmos DB si está
+     * disponible; de lo contrario, se utiliza el almacenamiento en memoria
+     * proporcionado por conversationService.
+     * @param {TurnContext} context Contexto de la conversación
+     * @param {string} userId Identificador del usuario
+     * @param {string} conversationId Identificador de la conversación
+     */
+    async showConversationHistory(context, userId, conversationId) {
+        try {
+            let historial = [];
+            if (cosmosService.isAvailable()) {
+                // Recuperar los últimos 5 mensajes desde Cosmos DB
+                historial = await cosmosService.getConversationHistory(conversationId, userId, 5);
+            } else {
+                // Recuperar historial desde memoria (ConversationService)
+                historial = await conversationService.getConversationHistory(conversationId, 5);
+            }
+
+            if (!historial || historial.length === 0) {
+                await context.sendActivity('📝 **No hay historial**\n\nAún no hay mensajes en esta conversación.');
+                return;
+            }
+
+            // Construir un mensaje legible con los últimos mensajes
+            let respuesta = '🗒️ **Historial de la conversación (últimos 5 mensajes)**\n\n';
+            historial.forEach((msg, index) => {
+                // Determinar el tipo de mensaje (usuario o bot) dependiendo del origen
+                const tipo = msg.type === 'user' || msg.userId !== 'bot' ? '👤 Usuario' : '🤖 Bot';
+                // Obtener el contenido; algunos servicios utilizan 'message' y otros 'message'
+                const contenido = msg.message || msg.content || '';
+                const texto = contenido.length > 200 ? contenido.substring(0, 200) + '…' : contenido;
+                respuesta += `${index + 1}. ${tipo}: ${texto}\n`;
+            });
+
+            await context.sendActivity(respuesta);
+        } catch (error) {
+            console.error('Error mostrando historial de conversación:', error);
+            await context.sendActivity('❌ Error obteniendo el historial de la conversación.');
+        }
     }
 
     async handleMembersAdded(context, next) {
@@ -237,7 +282,15 @@ class TeamsBot extends DialogBot {
                 return await next();
             }
 
-            if (text.toLowerCase().includes('historial') || text.toLowerCase().includes('resumen')) {
+            // Comandos de historial y resumen
+            const lowerText = text.toLowerCase();
+            if (lowerText.includes('historial') && !lowerText.includes('resumen')) {
+                // Mostrar historial de conversación (últimos 5 mensajes)
+                await this.showConversationHistory(context, userId, conversationId);
+                return await next();
+            }
+            if (lowerText.includes('resumen')) {
+                // Mostrar resumen de conversación utilizando OpenAI
                 await this.showConversationSummary(context, userId, conversationId);
                 return await next();
             }

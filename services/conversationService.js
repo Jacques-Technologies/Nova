@@ -72,9 +72,13 @@ class ConversationService {
             // Agregar nuevo mensaje
             conversationMessages.push(messageObj);
             
-            // Mantener solo los últimos 50 mensajes para no llenar memoria
-            if (conversationMessages.length > 50) {
-                conversationMessages = conversationMessages.slice(-50);
+            // Mantener solo los últimos 5 mensajes para no llenar memoria
+            // Esto asegura que el contexto no crezca indefinidamente y que el bot sólo
+            // procese las interacciones más recientes. Si más de 5 mensajes se
+            // almacenan, se recortan desde el inicio de la conversación, quedando
+            // únicamente los 5 más recientes.
+            if (conversationMessages.length > 5) {
+                conversationMessages = conversationMessages.slice(-5);
             }
             
             this.messages.set(conversationId, conversationMessages);
@@ -94,14 +98,14 @@ class ConversationService {
     /**
      * Obtiene el historial de conversación
      * @param {string} conversationId - ID de la conversación
-     * @param {number} limit - Límite de mensajes (default: 20)
+     * @param {number} limit - Límite de mensajes (default: 5)
      * @returns {Array} - Array de mensajes
      */
-    async getConversationHistory(conversationId, limit = 20) {
+    async getConversationHistory(conversationId, limit = 5) {
         try {
             const conversationMessages = this.messages.get(conversationId) || [];
             
-            // Retornar los últimos 'limit' mensajes
+            // Retornar los últimos 'limit' mensajes (máximo 5 por defecto)
             const recentMessages = conversationMessages.slice(-limit);
             
             console.log(`📚 [${conversationId}] Historial obtenido: ${recentMessages.length} mensajes`);

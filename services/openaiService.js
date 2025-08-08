@@ -351,7 +351,8 @@ class OpenAIService {
             // ✅ MEJORADO: Obtener historial desde Cosmos DB si está disponible
             let historialCompleto = historial;
             if (conversationId && userInfo && cosmosService.isAvailable() && (!historial || historial.length === 0)) {
-                historialCompleto = await cosmosService.getConversationHistory(conversationId, userInfo.usuario, 10);
+                // Recuperar únicamente los últimos 5 mensajes para mantener un contexto breve
+                historialCompleto = await cosmosService.getConversationHistory(conversationId, userInfo.usuario, 5);
                 console.log(`📚 Historial desde Cosmos DB: ${historialCompleto.length} mensajes`);
             }
 
@@ -598,9 +599,11 @@ ${contextoSeguimiento}
         
         // Procesar historial normal (últimos mensajes de la conversación actual)
         if (historial && historial.length > 0) {
-            const recientes = historial.slice(-8); // Mantener solo los 8 más recientes
+            // Mantener solo los 5 mensajes más recientes del historial
+            const recientes = historial.slice(-5);
             recientes.forEach(item => {
                 if (item.message && item.message.trim()) {
+                    // Determinar rol basado en el tipo de mensaje
                     const role = item.type === 'user' || item.userId !== 'bot' ? "user" : "assistant";
                     mensajes.push({
                         role: role,
@@ -1664,7 +1667,8 @@ ${contextoSeguimiento}
             resumen += `📅 **Conversación iniciada**: ${estadisticas.conversacionCreada}\n`;
             resumen += `💾 **Persistencia**: ${estadisticas.persistencia}\n\n`;
 
-            const ultimosMensajes = historial.slice(-6);
+            // Mostrar solo los 5 últimos mensajes para mantener la vista concisa
+            const ultimosMensajes = historial.slice(-5);
             resumen += `📝 **Últimos mensajes**:\n`;
             ultimosMensajes.forEach((msg, index) => {
                 const tipo = msg.type === 'user' ? '👤 Usuario' : '🤖 Bot';

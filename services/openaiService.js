@@ -1028,63 +1028,123 @@ ${contextoSeguimiento}
      * ✅ MEJORADO: Generar mensaje de referencia automático
      */
     async generarMensajeReferenciaAutomatico(mensajeUsuario, respuestaBot, userId, toolCalls) {
-        try {
-            const mensajeLower = mensajeUsuario.toLowerCase();
-            let tipoReferencia = null;
-            let metadata = {};
-
-            // ✅ CRITERIOS AMPLIADOS para generar referencias automáticas
-            if (mensajeLower.includes('tasas') || mensajeLower.includes('interés') || mensajeLower.includes('inversión')) {
-                tipoReferencia = 'tasas';
-                metadata = { consulta_original: mensajeUsuario, area: 'financiera' };
-            } else if (mensajeLower.includes('documento') || mensajeLower.includes('política') || mensajeLower.includes('manual')) {
-                tipoReferencia = 'documentos';
-                metadata = { busqueda: mensajeUsuario, area: 'documentacion' };
-            } else if (mensajeLower.includes('feriados') || mensajeLower.includes('festivos') || mensajeLower.includes('vacaciones')) {
-                tipoReferencia = 'feriados';
-                metadata = { area: 'recursos_humanos' };
-            } else if (mensajeLower.includes('información') || mensajeLower.includes('datos') || mensajeLower.includes('perfil')) {
-                tipoReferencia = 'consulta';
-                metadata = { tipo_info: 'personal' };
-            } else if (toolCalls && toolCalls.length > 0) {
-                // Si se usaron herramientas, siempre generar referencia
-                tipoReferencia = 'consulta';
-                metadata = { 
-                    herramientas_usadas: toolCalls.map(t => t.function.name),
-                    consulta_original: mensajeUsuario 
-                };
-            } else if (respuestaBot.length > 500) {
-                // Respuestas largas y detalladas
-                tipoReferencia = 'analysis';
-                metadata = { respuesta_extensa: true };
-            } else if (mensajeLower.includes('ayuda') || mensajeLower.includes('cómo') || mensajeLower.includes('explicar')) {
-                // Consultas de ayuda/explicación
-                tipoReferencia = 'consulta';
-                metadata = { tipo: 'ayuda_explicacion' };
-            }
-
-            if (tipoReferencia) {
-                // Crear versión resumida para la referencia
-                const resumenRespuesta = respuestaBot.length > 300 ? 
-                    respuestaBot.substring(0, 300) + '...' : 
-                    respuestaBot;
-
-                const contenidoReferencia = `**Consulta**: ${mensajeUsuario}\n\n**Respuesta**: ${resumenRespuesta}`;
-
-                await seguimientoService.agregarMensajeReferencia(
-                    userId,
-                    contenidoReferencia,
-                    tipoReferencia,
-                    metadata
-                );
-
-                console.log(`📋 [${userId}] Referencia automática generada: ${tipoReferencia}`);
-            }
-
-        } catch (error) {
-            console.warn('⚠️ Error generando referencia automática:', error.message);
+    try {
+        // ✅ VERIFICACIÓN: Solo generar si seguimiento está disponible
+        if (!seguimientoService.isAvailable()) {
+            console.log(`⚠️ [${userId}] SeguimientoService no disponible - saltando referencia automática`);
+            return;
         }
+
+        const mensajeLower = mensajeUsuario.toLowerCase();
+        let tipoReferencia = null;
+        let metadata = {};
+        let debeGenerar = false;
+
+        // ✅ CRITERIOS ESPECÍFICOS para generar referencias
+        if (mensajeLower.includes('tasas') || mensajeLower.includes('interés') || mensajeLower.includes('inversión')) {
+            tipoReferencia = 'tasas';
+            metadata = { 
+                consulta_original: mensajeUsuario, 
+                area: 'financiera',
+                herramientas: toolCalls ? toolCalls.map(t => t.function.name) : []
+            };
+            debeGenerar = true;
+            
+        } else if (mensajeLower.includes('documento') || mensajeLower.includes('política') || mensajeLower.includes('manual') || mensajeLower.includes('ajustes.docx')) {
+            tipoReferencia = 'documentos';
+            metadata = { 
+                busqueda: mensajeUsuario, 
+                area: 'documentacion',
+                herramientas: toolCalls ? toolCalls.map(t => t.function.name) : []
+            };
+            debeGenerar = true;
+            
+        } else if (mensajeLower.includes('feriados') || mensajeLower.includes('festivos') || mensajeLower.includes('vacaciones')) {
+            tipoReferencia = 'feriados';
+            metadata = { 
+                area: 'recursos_humanos',
+                consulta_original: mensajeUsuario
+            };
+            debeGenerar = true;
+            
+        } else if (toolCalls && toolCalls.length > 0) {
+            // ✅ IMPORTANTE: Si se usaron herramientas, SIEMPRE generar referencia
+            const herramientasUsadas = toolCalls.map(t => t.function.name);
+            
+            // Determinar tipo basado en herramientas
+            if (herramientasUsadas.includes('consultar_tasas_interes')) {
+                tipoReferencia = 'tasas';
+            } else if (herramientasUsadas.includes('buscar_documentos')) {
+                tipoReferencia = 'documentos';
+            } else if (herramientasUsadas.includes('obtener_dias_feriados')) {
+                tipoReferencia = 'feriados';
+            } else {
+                tipoReferencia = 'consulta';
+            }
+            
+            metadata = { 
+                herramientas_usadas: herramientasUsadas,
+                consulta_original: mensajeUsuario,
+                automatico: true
+            };
+            debeGenerar = true;
+            
+        } else if (respuestaBot.length > 800) {
+            // ✅ Respuestas largas y detalladas
+            tipoReferencia = 'analysis';
+            metadata = { 
+                respuesta_extensa: true,
+                longitud_respuesta: respuestaBot.length,
+                consulta_original: mensajeUsuario
+            };
+            debeGenerar = true;
+            
+        } else if (mensajeLower.includes('información') || mensajeLower.includes('datos') || mensajeLower.includes('perfil')) {
+            tipoReferencia = 'consulta';
+            metadata = { 
+                tipo_info: 'personal',
+                consulta_original: mensajeUsuario
+            };
+            debeGenerar = true;
+        }
+
+        // ✅ GENERAR REFERENCIA si cumple criterios
+        if (debeGenerar && tipoReferencia) {
+            // Crear versión resumida para la referencia
+            const maxLength = 500; // Reducir para evitar problemas
+            const resumenRespuesta = respuestaBot.length > maxLength ? 
+                respuestaBot.substring(0, maxLength) + '... [RESPUESTA COMPLETA TRUNCADA]' : 
+                respuestaBot;
+
+            const contenidoReferencia = `**P**: ${mensajeUsuario}\n\n**R**: ${resumenRespuesta}`;
+
+            console.log(`📋 [${userId}] Generando referencia automática: ${tipoReferencia}`);
+            console.log(`🔍 [${userId}] Contenido: ${contenidoReferencia.length} chars`);
+
+            const referenciaCreada = await seguimientoService.agregarMensajeReferencia(
+                userId,
+                contenidoReferencia,
+                tipoReferencia,
+                metadata
+            );
+
+            if (referenciaCreada) {
+                console.log(`✅ [${userId}] Referencia automática #${referenciaCreada.numeroReferencia} creada exitosamente`);
+            } else {
+                console.warn(`⚠️ [${userId}] No se pudo crear referencia automática`);
+            }
+        } else {
+            console.log(`ℹ️ [${userId}] Mensaje no cumple criterios para referencia automática`);
+            console.log(`   - Herramientas usadas: ${toolCalls ? toolCalls.length : 0}`);
+            console.log(`   - Longitud respuesta: ${respuestaBot.length}`);
+            console.log(`   - Palabras clave: ${mensajeLower}`);
+        }
+
+    } catch (error) {
+        console.error(`❌ [${userId}] Error generando referencia automática:`, error.message);
+        console.error(`   Stack:`, error.stack);
     }
+}
 
     // ===== MÉTODOS EXISTENTES (mantener todos) =====
 

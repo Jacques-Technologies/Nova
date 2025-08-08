@@ -1,184 +1,28 @@
 // services/openaiService.js
-// OpenAI Service COMPLETO CORREGIDO con Cosmos DB y mejores formatos
+// OpenAI Service COMPLETO con Sistema de Seguimiento y Memoria Contextual
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
 const axios = require('axios');
 const { CardFactory } = require('botbuilder');
 const cosmosService = require('./cosmosService');
 const documentService = require('./documentService');
+const seguimientoService = require('./seguimientoService');
 require('dotenv').config();
 
 /**
- * Servicio OpenAI mejorado con persistencia en Cosmos DB y formato corregido
+ * Servicio OpenAI COMPLETO con persistencia en Cosmos DB y memoria contextual
  */
 class OpenAIService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando OpenAI Service con Cosmos DB...');
+        console.log('🚀 Inicializando OpenAI Service con Memoria Contextual...');
         this.diagnoseConfiguration();
         this.initializeOpenAI();
         this.tools = this.defineTools();
         
         console.log(`✅ OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
-    }
-
-    /**
-     * ✅ CORREGIDO: Búsqueda de documentos con mejor integración
-     */
-    async buscarDocumentos(consulta, userInfo) {
-        try {
-            const userId = userInfo?.usuario || 'unknown';
-            console.log(`📖 [${userId}] Iniciando búsqueda de documentos: "${consulta}"`);
-
-            // ✅ VERIFICACIÓN MEJORADA: Estado del servicio
-            if (!documentService.isAvailable()) {
-                console.warn(`⚠️ [${userId}] DocumentService no disponible`);
-                
-                const configInfo = documentService.getConfigInfo();
-                console.log(`📊 Estado del servicio:`, {
-                    searchAvailable: configInfo.searchAvailable,
-                    error: configInfo.error,
-                    endpoint: configInfo.endpoint,
-                    indexName: configInfo.indexName
-                });
-
-                return `⚠️ **Servicio de búsqueda no disponible**\n\n` +
-                       `**Estado**: ${configInfo.error || 'No configurado'}\n\n` +
-                       `**Para habilitar búsqueda de documentos:**\n` +
-                       `• Configurar Azure Search en las variables de entorno\n` +
-                       `• Verificar conectividad con el servicio\n` +
-                       `• Contactar al administrador del sistema\n\n` +
-                       `**Funciones disponibles:**\n` +
-                       `• Consulta de tasas: \`tasas 2025\`\n` +
-                       `• Información personal: \`mi info\`\n` +
-                       `• Chat general con IA`;
-            }
-
-            // ✅ BÚSQUEDA MEJORADA: Con logging detallado
-            console.log(`🔍 [${userId}] DocumentService disponible, ejecutando búsqueda...`);
-            
-            // Llamar al método de búsqueda del DocumentService
-            const resultado = await documentService.buscarDocumentos(consulta, userId);
-            
-            console.log(`📊 [${userId}] Búsqueda completada, resultado obtenido`);
-            
-            // ✅ VALIDACIÓN: Verificar que obtuvimos resultado válido
-            if (!resultado || typeof resultado !== 'string') {
-                console.warn(`⚠️ [${userId}] Resultado inválido de DocumentService:`, typeof resultado);
-                return `❌ **Error en búsqueda**: No se obtuvo resultado válido del servicio de documentos`;
-            }
-
-            // ✅ DETECCIÓN: Si no se encontraron documentos específicos
-            if (resultado.includes('No se encontraron documentos') || 
-                resultado.includes('❌ No se encontraron')) {
-                
-                console.log(`💡 [${userId}] No se encontraron documentos, ofreciendo alternativas`);
-                
-                // Para el caso específico de "ajustes.docx"
-                if (consulta.toLowerCase().includes('ajustes.docx') || 
-                    consulta.toLowerCase().includes('ajustes')) {
-                    
-                    return `🔍 **Búsqueda: "${consulta}"**\n\n` +
-                           `❌ **Documento "ajustes.docx" no encontrado**\n\n` +
-                           `**Posibles causas:**\n` +
-                           `• El archivo no está indexado en Azure Search\n` +
-                           `• El documento no existe en el sistema\n` +
-                           `• El nombre del archivo es diferente\n\n` +
-                           `**Alternativas de búsqueda:**\n` +
-                           `• Busca por contenido: "configuración sistema"\n` +
-                           `• Busca por tema: "ajustes configuración"\n` +
-                           `• Busca documentos similares: "parámetros sistema"\n\n` +
-                           `**Otras opciones:**\n` +
-                           `• \`buscar políticas\` - Ver políticas corporativas\n` +
-                           `• \`obtener feriados\` - Consultar días feriados\n` +
-                           `• Describir qué información necesitas del documento`;
-                }
-            }
-
-            // ✅ ÉXITO: Retornar resultado de la búsqueda
-            console.log(`✅ [${userId}] Búsqueda exitosa, retornando resultado`);
-            return resultado;
-
-        } catch (error) {
-            const userId = userInfo?.usuario || 'unknown';
-            console.error(`❌ [${userId}] Error en búsqueda de documentos:`, error);
-            
-            // ✅ DIAGNÓSTICO: Información detallada del error
-            let errorMessage = `❌ **Error buscando documentos**\n\n`;
-            errorMessage += `**Consulta**: "${consulta}"\n`;
-            errorMessage += `**Error**: ${error.message}\n\n`;
-            
-            // ✅ CLASIFICACIÓN: Tipo de error
-            if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
-                errorMessage += `**Tipo**: Error de conectividad con Azure Search\n`;
-                errorMessage += `**Solución**: Verificar configuración de red y endpoint\n`;
-            } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
-                errorMessage += `**Tipo**: Error de permisos\n`;
-                errorMessage += `**Solución**: Verificar API Key de Azure Search\n`;
-            } else if (error.message.includes('404') || error.message.includes('Not Found')) {
-                errorMessage += `**Tipo**: Servicio o índice no encontrado\n`;
-                errorMessage += `**Solución**: Verificar endpoint e índice en Azure Search\n`;
-            } else {
-                errorMessage += `**Tipo**: Error interno del servicio\n`;
-                errorMessage += `**Solución**: Contactar soporte técnico\n`;
-            }
-            
-            errorMessage += `\n**Funciones disponibles:**\n`;
-            errorMessage += `• Consulta de tasas: \`tasas 2025\`\n`;
-            errorMessage += `• Información personal: \`mi info\`\n`;
-            errorMessage += `• Chat general con IA`;
-            
-            return errorMessage;
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Buscar políticas específicas
-     */
-    async buscarPoliticas(tipoPolitica, userInfo) {
-        try {
-            if (!documentService.isAvailable()) {
-                return `⚠️ **Servicio de políticas no disponible**\n\n` +
-                       `No se puede acceder a las políticas corporativas en este momento.`;
-            }
-
-            const userId = userInfo?.usuario || 'unknown';
-            console.log(`📋 [${userId}] Buscando política: ${tipoPolitica}`);
-
-            const resultado = await documentService.buscarPoliticas(tipoPolitica, userId);
-            
-            return `📋 **Política: ${tipoPolitica.charAt(0).toUpperCase() + tipoPolitica.slice(1)}**\n\n${resultado}`;
-
-        } catch (error) {
-            console.error('❌ Error buscando políticas:', error);
-            return `❌ **Error buscando política de ${tipoPolitica}**: ${error.message}`;
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Obtener días feriados
-     */
-    async obtenerDiasFeriados(anio, userInfo) {
-        try {
-            if (!documentService.isAvailable()) {
-                return `⚠️ **Información de feriados no disponible**\n\n` +
-                       `No se puede acceder al calendario de días feriados.`;
-            }
-
-            const userId = userInfo?.usuario || 'unknown';
-            const añoConsulta = anio || new Date().getFullYear();
-            console.log(`📅 [${userId}] Obteniendo feriados para ${añoConsulta}`);
-
-            const resultado = await documentService.obtenerDiasFeriados(añoConsulta, userId);
-            
-            return `📅 **Días Feriados ${añoConsulta}**\n\n${resultado}`;
-
-        } catch (error) {
-            console.error('❌ Error obteniendo feriados:', error);
-            return `❌ **Error obteniendo feriados para ${anio || 'año actual'}**: ${error.message}`;
-        }
     }
 
     /**
@@ -199,6 +43,7 @@ class OpenAIService {
         console.log(`   Base URL: ${config.baseURL}`);
         console.log(`   Cosmos DB: ${cosmosService.isAvailable() ? '✅ Disponible' : '⚠️ No disponible'}`);
         console.log(`   Document Search: ${documentService.isAvailable() ? '✅ Disponible' : '⚠️ No disponible'}`);
+        console.log(`   Seguimiento: ${seguimientoService.isAvailable() ? '✅ Disponible' : '⚠️ No disponible'}`);
         
         if (config.apiKey) {
             console.log(`   Key Preview: ${config.apiKey.substring(0, 10)}...${config.apiKey.slice(-4)}`);
@@ -276,7 +121,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Herramientas con nueva herramienta de tasas y documentos
+     * ✅ COMPLETO: Herramientas con sistema de seguimiento integrado
      */
     defineTools() {
         const tools = [
@@ -388,6 +233,48 @@ class OpenAIService {
             {
                 type: "function",
                 function: {
+                    name: "consultar_seguimiento",
+                    description: "Consulta el historial de seguimiento del usuario (últimos 5 mensajes de referencia)",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            accion: {
+                                type: "string",
+                                enum: ["mostrar", "detallado", "estadisticas", "exportar", "limpiar", "referencia_especifica"],
+                                description: "Acción a realizar con el seguimiento"
+                            },
+                            numeroReferencia: {
+                                type: "integer",
+                                description: "Número específico de referencia (solo para accion='referencia_especifica')"
+                            }
+                        },
+                        required: ["accion"]
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "consultar_contexto_anterior",
+                    description: "Consulta el contexto de conversaciones anteriores del usuario para dar respuestas más informadas",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            tema: {
+                                type: "string",
+                                description: "Tema o palabra clave para buscar en el contexto anterior"
+                            },
+                            incluir_detalles: {
+                                type: "boolean",
+                                description: "Si incluir detalles completos de las referencias encontradas"
+                            }
+                        }
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
                     name: "consultar_api_nova",
                     description: "Realiza consultas a APIs de Nova usando el token del usuario",
                     parameters: {
@@ -425,7 +312,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Procesamiento principal con Cosmos DB
+     * ✅ MEJORADO: Procesamiento principal con memoria contextual
      */
     async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
         try {
@@ -444,6 +331,9 @@ class OpenAIService {
 
             console.log(`📝 [${userInfo?.usuario || 'unknown'}] Procesando: "${mensaje}"`);
             
+            // ✅ NUEVO: Inyectar contexto automático si es relevante
+            const mensajeContextualizado = await this.inyectarContextoAutomatico(mensaje, userInfo);
+
             // ✅ NUEVO: Guardar mensaje del usuario en Cosmos DB
             if (conversationId && userInfo && cosmosService.isAvailable()) {
                 await cosmosService.saveMessage(
@@ -465,8 +355,9 @@ class OpenAIService {
                 console.log(`📚 Historial desde Cosmos DB: ${historialCompleto.length} mensajes`);
             }
 
-            const mensajes = this.formatearHistorial(historialCompleto, userInfo);
-            mensajes.push({ role: "user", content: mensaje });
+            // ✅ MEJORADO: Formatear historial CON seguimiento automático
+            const mensajes = await this.formatearHistorial(historialCompleto, userInfo, conversationId);
+            mensajes.push({ role: "user", content: mensajeContextualizado });
 
             // ✅ MEJORADO: Configuración más inteligente del modelo
             const requestConfig = {
@@ -511,6 +402,13 @@ class OpenAIService {
                 };
             }
 
+            // ✅ NUEVO: Analizar si la respuesta debe hacer referencia al contexto
+            finalResponse.content = await this.analizarReferenciaContextual(
+                mensaje, 
+                finalResponse.content, 
+                userInfo
+            );
+
             // ✅ NUEVO: Guardar respuesta del bot en Cosmos DB
             if (conversationId && userInfo && finalResponse.content && cosmosService.isAvailable()) {
                 await cosmosService.saveMessage(
@@ -522,6 +420,16 @@ class OpenAIService {
                 );
             }
 
+            // ✅ NUEVO: Generar mensaje de referencia automáticamente para ciertas consultas
+            if (conversationId && userInfo && finalResponse.content) {
+                this.generarMensajeReferenciaAutomatico(
+                    mensaje, 
+                    finalResponse.content, 
+                    userInfo.usuario, 
+                    messageResponse.tool_calls
+                );
+            }
+
             console.log(`✅ [${userInfo?.usuario || 'unknown'}] Respuesta generada exitosamente`);
             return finalResponse;
 
@@ -529,6 +437,180 @@ class OpenAIService {
             console.error('❌ Error en procesarMensaje:', error);
             return this.manejarErrorOpenAI(error, userInfo);
         }
+    }
+
+    /**
+     * ✅ NUEVO: Middleware que inyecta contexto automáticamente en consultas relevantes
+     */
+    async inyectarContextoAutomatico(mensaje, userInfo) {
+        try {
+            if (!userInfo?.usuario || !seguimientoService.isAvailable()) {
+                return mensaje; // Sin cambios si no hay seguimiento
+            }
+
+            const mensajeLower = mensaje.toLowerCase();
+            
+            // Detectar si la consulta podría beneficiarse del contexto
+            const necesitaContexto = [
+                'similar', 'parecido', 'como antes', 'otra vez', 'de nuevo',
+                'anterior', 'previamente', 'la vez pasada', 'recordar',
+                'actualizar', 'cambió', 'diferencia', 'comparar',
+                'recuerdas', 'te acordás', 'mencionaste', 'dijiste'
+            ].some(keyword => mensajeLower.includes(keyword));
+
+            if (necesitaContexto) {
+                // Agregar instrucción implícita para usar contexto
+                const mensajeEnriquecido = `${mensaje}\n\n[CONTEXTO: Revisar si hay información relevante en consultas anteriores del usuario]`;
+                console.log(`🧠 [${userInfo.usuario}] Mensaje enriquecido con contexto automático`);
+                return mensajeEnriquecido;
+            }
+
+            return mensaje; // Sin cambios
+
+        } catch (error) {
+            console.warn('⚠️ Error inyectando contexto automático:', error.message);
+            return mensaje;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Analizar si la respuesta debe hacer referencia al contexto
+     */
+    async analizarReferenciaContextual(mensaje, respuesta, userInfo) {
+        try {
+            if (!userInfo?.usuario || !seguimientoService.isAvailable()) {
+                return respuesta;
+            }
+
+            const mensajeLower = mensaje.toLowerCase();
+            
+            // Si la consulta sugiere referencia al pasado
+            if (mensajeLower.includes('anterior') || mensajeLower.includes('antes') || 
+                mensajeLower.includes('recordar') || mensajeLower.includes('recuerdas')) {
+                
+                const referencias = await seguimientoService.obtenerMensajesReferencia(userInfo.usuario);
+                
+                if (referencias.length > 0) {
+                    const contextoAdicional = `\n\n💡 **Referencia a consultas anteriores**: Tienes ${referencias.length} consultas previas guardadas. Usa \`historial\` para ver detalles completos.`;
+                    return respuesta + contextoAdicional;
+                }
+            }
+
+            return respuesta;
+
+        } catch (error) {
+            console.warn('⚠️ Error analizando referencia contextual:', error.message);
+            return respuesta;
+        }
+    }
+
+    /**
+     * ✅ CORREGIDO: Formateo de historial CON seguimiento automático
+     */
+    async formatearHistorial(historial, userInfo, conversationId) {
+        const fechaActual = DateTime.now().setZone('America/Mexico_City');
+        
+        const userContext = userInfo ? 
+            `Usuario autenticado: ${userInfo.nombre} (${userInfo.usuario})` : 
+            'Usuario no autenticado';
+
+        const persistenciaInfo = cosmosService.isAvailable() ? 
+            'Persistencia: Cosmos DB activa' : 
+            'Persistencia: Solo memoria temporal';
+
+        const documentosInfo = documentService.isAvailable() ?
+            'Búsqueda de Documentos: Azure Search activo con embeddings vectoriales' :
+            'Búsqueda de Documentos: No disponible';
+
+        // ✅ NUEVO: Obtener seguimiento automáticamente
+        let contextoSeguimiento = '';
+        if (userInfo?.usuario && seguimientoService.isAvailable()) {
+            try {
+                const referencias = await seguimientoService.obtenerMensajesReferencia(userInfo.usuario);
+                
+                if (referencias.length > 0) {
+                    contextoSeguimiento = `\n🔷 **Historial de Consultas Recientes (${referencias.length}/5):**\n`;
+                    
+                    referencias.forEach((ref, index) => {
+                        const fecha = DateTime.fromISO(ref.timestamp).toFormat('dd/MM HH:mm');
+                        const preview = ref.contenido.length > 150 ? 
+                            ref.contenido.substring(0, 150) + '...' : 
+                            ref.contenido;
+                        
+                        contextoSeguimiento += `• #${ref.numeroReferencia} (${fecha}) - ${ref.tipo}: ${preview}\n`;
+                    });
+                    
+                    contextoSeguimiento += `\n⚠️ **IMPORTANTE**: Puedes hacer referencia a estas consultas previas para dar respuestas más contextuales y personalizadas. Si el usuario pregunta algo relacionado con estas referencias, úsalas para dar mejor contexto.`;
+                }
+            } catch (error) {
+                console.warn('⚠️ Error obteniendo seguimiento para contexto:', error.message);
+            }
+        }
+
+        const mensajes = [{
+            role: "system",
+            content: `Eres un asistente corporativo inteligente para Nova Corporation con MEMORIA CONTEXTUAL.
+
+🔷 **Contexto del Usuario:**
+${userContext}
+
+🔷 **Fecha y Hora Actual:**
+${fechaActual.toFormat('dd/MM/yyyy HH:mm:ss')} (${fechaActual.zoneName})
+
+🔷 **Estado del Sistema:**
+${persistenciaInfo}
+${documentosInfo}
+${contextoSeguimiento}
+
+🔷 **Instrucciones Especiales sobre Memoria:**
+• SÍ TIENES MEMORIA de las consultas importantes del usuario (máximo 5 más recientes)
+• Puedes hacer referencia a consultas anteriores cuando sea relevante
+• Si el usuario pregunta algo relacionado con su historial, úsalo para dar mejor contexto
+• Nunca digas "no puedo recordar conversaciones anteriores" - TIENES acceso a las referencias
+• Si no hay referencias relevantes, di "no tengo información previa sobre este tema específico"
+• Cuando hagas referencia al pasado, usa frases como "según tu consulta del [fecha]" o "basándome en lo que consultaste anteriormente"
+
+🔷 **Tus Capacidades:**
+• Conversación natural e inteligente con persistencia
+• Memoria contextual de las últimas 5 consultas importantes
+• Consulta de tasas de interés de Nova (herramienta especializada)
+• Búsqueda de documentos corporativos con IA vectorial
+• Consulta de políticas empresariales (vacaciones, horarios, prestaciones, etc.)
+• Información de días feriados oficiales
+• Acceso a información del usuario autenticado
+• Consultas a APIs internas de Nova
+• Análisis y explicaciones detalladas
+• Historial de conversaciones (${cosmosService.isAvailable() ? 'persistente' : 'temporal'})
+
+🔷 **Personalidad:**
+• Profesional pero amigable
+• Útil y proactivo para temas financieros
+• Claro y conciso en respuestas
+• Enfocado en productividad corporativa y servicios financieros
+• Usa la memoria contextual para dar respuestas más personalizadas
+
+🔷 **Importante:**
+• Siempre mantén la información del usuario segura
+• Para consultas de tasas, usa la herramienta especializada
+• Si tienes referencias previas relevantes, úsalas para dar mejor contexto
+• Las conversaciones se guardan ${cosmosService.isAvailable() ? 'permanentemente' : 'temporalmente'}`
+        }];
+        
+        // Procesar historial normal (últimos mensajes de la conversación actual)
+        if (historial && historial.length > 0) {
+            const recientes = historial.slice(-8); // Mantener solo los 8 más recientes
+            recientes.forEach(item => {
+                if (item.message && item.message.trim()) {
+                    const role = item.type === 'user' || item.userId !== 'bot' ? "user" : "assistant";
+                    mensajes.push({
+                        role: role,
+                        content: item.message.trim()
+                    });
+                }
+            });
+        }
+
+        return mensajes;
     }
 
     /**
@@ -602,8 +684,13 @@ class OpenAIService {
             // APIs y consultas
             'consultar', 'api', 'buscar',
             
-            // Historial
-            'resumen', 'historial', 'conversación',
+            // Historial y seguimiento - NUEVO
+            'resumen', 'historial', 'conversación', 'seguimiento',
+            'anterior', 'antes', 'previamente', 'ya consulté', 'ya pregunté',
+            'la vez pasada', 'anteriormente', 'hace poco', 'el otro día',
+            'recordar', 'recuerda', 'como antes', 'similar a', 'parecido a',
+            'de nuevo', 'otra vez', 'como la consulta de', 'como cuando',
+            'referencia', 'context', 'contexto',
             
             // Tasas de interés - PALABRAS CLAVE MEJORADAS
             'tasas', 'tasa', 'interes', 'interés', 'préstamo', 'crédito',
@@ -707,7 +794,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ CORREGIDO: Herramientas con mejor detección de documentos
+     * ✅ COMPLETO: Herramientas con seguimiento integrado
      */
     async ejecutarHerramienta(nombre, parametros, userToken, userInfo, conversationId) {
         const userId = userInfo?.usuario || 'unknown';
@@ -737,6 +824,14 @@ class OpenAIService {
                 console.log(`📅 [${userId}] Obteniendo feriados para: ${parametros.anio || 'año actual'}`);
                 return await this.obtenerDiasFeriados(parametros.anio, userInfo);
 
+            case 'consultar_seguimiento':
+                console.log(`📋 [${userId}] Consultando seguimiento: ${parametros.accion}`);
+                return await this.manejarSeguimiento(parametros.accion, parametros.numeroReferencia, userInfo);
+
+            case 'consultar_contexto_anterior':
+                console.log(`🧠 [${userId}] Consultando contexto anterior: ${parametros.tema}`);
+                return await this.consultarContextoAnterior(parametros.tema, parametros.incluir_detalles, userInfo);
+
             case 'consultar_api_nova':
                 console.log(`🌐 [${userId}] Consultando API Nova: ${parametros.endpoint}`);
                 return await this.consultarApiNova(
@@ -756,6 +851,392 @@ class OpenAIService {
     }
 
     /**
+     * ✅ NUEVO: Manejar seguimiento
+     */
+    async manejarSeguimiento(accion, numeroReferencia, userInfo) {
+        try {
+            const userId = userInfo?.usuario || 'unknown';
+
+            switch (accion) {
+                case 'mostrar':
+                    return await seguimientoService.formatearMensajesReferencia(userId, false);
+
+                case 'detallado':
+                    return await seguimientoService.formatearMensajesReferencia(userId, true);
+
+                case 'estadisticas':
+                    const stats = await seguimientoService.obtenerEstadisticas(userId);
+                    return this.formatearEstadisticasSeguimiento(stats, userInfo);
+
+                case 'exportar':
+                    return await seguimientoService.exportarSeguimiento(userId, userInfo);
+
+                case 'limpiar':
+                    const limpiado = await seguimientoService.limpiarSeguimiento(userId);
+                    return limpiado ? 
+                        '✅ **Seguimiento limpiado**\n\nTu historial de referencias ha sido eliminado completamente.' :
+                        '❌ **Error limpiando seguimiento**\n\nNo se pudo limpiar el historial.';
+
+                case 'referencia_especifica':
+                    if (!numeroReferencia) {
+                        return '❌ **Número de referencia requerido**\n\nEspecifica el número: `referencia #N`';
+                    }
+                    
+                    const mensaje = await seguimientoService.obtenerMensajePorNumero(userId, numeroReferencia);
+                    return mensaje ? 
+                        this.formatearMensajeEspecifico(mensaje) :
+                        `❌ **Referencia #${numeroReferencia} no encontrada**\n\nVerifica el número con \`historial\`.`;
+
+                default:
+                    return '❌ Acción de seguimiento no reconocida';
+            }
+
+        } catch (error) {
+            console.error('❌ Error en manejarSeguimiento:', error);
+            return `❌ **Error en seguimiento**: ${error.message}`;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Consultar contexto anterior
+     */
+    async consultarContextoAnterior(tema, incluirDetalles = false, userInfo) {
+        try {
+            const userId = userInfo?.usuario || 'unknown';
+            
+            if (!seguimientoService.isAvailable()) {
+                return 'Sistema de seguimiento no disponible';
+            }
+
+            const referencias = await seguimientoService.obtenerMensajesReferencia(userId);
+            
+            if (referencias.length === 0) {
+                return 'No hay contexto anterior disponible para este usuario';
+            }
+
+            // Filtrar referencias relevantes al tema si se especifica
+            let referenciasRelevantes = referencias;
+            if (tema) {
+                const temaLower = tema.toLowerCase();
+                referenciasRelevantes = referencias.filter(ref => 
+                    ref.contenido.toLowerCase().includes(temaLower) ||
+                    ref.tipo.toLowerCase().includes(temaLower) ||
+                    (ref.metadata?.consulta_original && ref.metadata.consulta_original.toLowerCase().includes(temaLower))
+                );
+            }
+
+            if (referenciasRelevantes.length === 0) {
+                return `No se encontró contexto anterior relacionado con "${tema}"`;
+            }
+
+            // Formatear respuesta
+            let respuesta = `🧠 **Contexto Anterior del Usuario:**\n\n`;
+            respuesta += `📊 **Encontradas**: ${referenciasRelevantes.length} referencias relevantes\n\n`;
+
+            referenciasRelevantes.forEach((ref, index) => {
+                const fecha = DateTime.fromISO(ref.timestamp).toFormat('dd/MM/yyyy HH:mm');
+                const tipoEmoji = seguimientoService.obtenerEmojiTipo(ref.tipo);
+                
+                respuesta += `${tipoEmoji} **Ref #${ref.numeroReferencia}** (${fecha}) - ${ref.tipo}\n`;
+                
+                if (incluirDetalles) {
+                    respuesta += `📝 ${ref.contenido}\n`;
+                    if (ref.metadata?.consulta_original) {
+                        respuesta += `🔍 Consulta original: "${ref.metadata.consulta_original}"\n`;
+                    }
+                } else {
+                    const preview = ref.contenido.length > 100 ? 
+                        ref.contenido.substring(0, 100) + '...' : 
+                        ref.contenido;
+                    respuesta += `📝 ${preview}\n`;
+                }
+                
+                if (index < referenciasRelevantes.length - 1) {
+                    respuesta += `\n`;
+                }
+            });
+
+            respuesta += `\n💡 **Usa esta información** para dar respuestas más contextuales y personalizadas.`;
+
+            return respuesta;
+
+        } catch (error) {
+            console.error('❌ Error consultando contexto anterior:', error);
+            return `❌ Error accediendo al contexto anterior: ${error.message}`;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Formatear estadísticas de seguimiento
+     */
+    formatearEstadisticasSeguimiento(stats, userInfo) {
+        if (!stats) {
+            return '❌ Error obteniendo estadísticas de seguimiento';
+        }
+
+        let respuesta = `📊 **Estadísticas de Seguimiento**\n\n`;
+        respuesta += `👤 **Usuario**: ${userInfo?.nombre || 'Desconocido'} (${userInfo?.usuario})\n`;
+        respuesta += `📋 **Total Referencias**: ${stats.totalMensajes}/5\n\n`;
+
+        if (stats.totalMensajes > 0) {
+            respuesta += `📈 **Distribución por Tipo:**\n`;
+            Object.entries(stats.tiposMensajes).forEach(([tipo, cantidad]) => {
+                const emoji = seguimientoService.obtenerEmojiTipo(tipo);
+                const porcentaje = Math.round((cantidad / stats.totalMensajes) * 100);
+                respuesta += `${emoji} ${tipo}: ${cantidad} (${porcentaje}%)\n`;
+            });
+
+            respuesta += `\n🕐 **Actividad Reciente:**\n`;
+            respuesta += `📅 Más reciente: ${stats.mensajeMasReciente}\n`;
+            respuesta += `📅 Más antigua: ${stats.mensajeMasAntiguo}\n`;
+            respuesta += `⏰ Rango temporal: ${stats.rangoFechas}\n`;
+        }
+
+        respuesta += `\n💾 **Estado del Sistema:**\n`;
+        respuesta += `✅ Seguimiento: ${seguimientoService.isAvailable() ? 'Activo' : 'Inactivo'}\n`;
+        respuesta += `💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Solo memoria'}`;
+
+        return respuesta;
+    }
+
+    /**
+     * ✅ NUEVO: Formatear mensaje específico
+     */
+    formatearMensajeEspecifico(mensaje) {
+        const fecha = DateTime.fromISO(mensaje.timestamp).toFormat('dd/MM/yyyy HH:mm:ss');
+        const tipoEmoji = seguimientoService.obtenerEmojiTipo(mensaje.tipo);
+
+        let respuesta = `${tipoEmoji} **Referencia #${mensaje.numeroReferencia}**\n\n`;
+        respuesta += `🏷️ **Tipo**: ${mensaje.tipo}\n`;
+        respuesta += `📅 **Fecha**: ${fecha}\n\n`;
+        respuesta += `📝 **Contenido Completo:**\n`;
+        respuesta += `${mensaje.contenido}\n\n`;
+
+        if (mensaje.metadata && Object.keys(mensaje.metadata).length > 0) {
+            respuesta += `🔍 **Información Adicional:**\n`;
+            Object.entries(mensaje.metadata)
+                .filter(([key]) => !['version', 'source'].includes(key))
+                .forEach(([key, value]) => {
+                    respuesta += `• ${key}: ${value}\n`;
+                });
+        }
+
+        return respuesta;
+    }
+
+    /**
+     * ✅ MEJORADO: Generar mensaje de referencia automático
+     */
+    async generarMensajeReferenciaAutomatico(mensajeUsuario, respuestaBot, userId, toolCalls) {
+        try {
+            const mensajeLower = mensajeUsuario.toLowerCase();
+            let tipoReferencia = null;
+            let metadata = {};
+
+            // ✅ CRITERIOS AMPLIADOS para generar referencias automáticas
+            if (mensajeLower.includes('tasas') || mensajeLower.includes('interés') || mensajeLower.includes('inversión')) {
+                tipoReferencia = 'tasas';
+                metadata = { consulta_original: mensajeUsuario, area: 'financiera' };
+            } else if (mensajeLower.includes('documento') || mensajeLower.includes('política') || mensajeLower.includes('manual')) {
+                tipoReferencia = 'documentos';
+                metadata = { busqueda: mensajeUsuario, area: 'documentacion' };
+            } else if (mensajeLower.includes('feriados') || mensajeLower.includes('festivos') || mensajeLower.includes('vacaciones')) {
+                tipoReferencia = 'feriados';
+                metadata = { area: 'recursos_humanos' };
+            } else if (mensajeLower.includes('información') || mensajeLower.includes('datos') || mensajeLower.includes('perfil')) {
+                tipoReferencia = 'consulta';
+                metadata = { tipo_info: 'personal' };
+            } else if (toolCalls && toolCalls.length > 0) {
+                // Si se usaron herramientas, siempre generar referencia
+                tipoReferencia = 'consulta';
+                metadata = { 
+                    herramientas_usadas: toolCalls.map(t => t.function.name),
+                    consulta_original: mensajeUsuario 
+                };
+            } else if (respuestaBot.length > 500) {
+                // Respuestas largas y detalladas
+                tipoReferencia = 'analysis';
+                metadata = { respuesta_extensa: true };
+            } else if (mensajeLower.includes('ayuda') || mensajeLower.includes('cómo') || mensajeLower.includes('explicar')) {
+                // Consultas de ayuda/explicación
+                tipoReferencia = 'consulta';
+                metadata = { tipo: 'ayuda_explicacion' };
+            }
+
+            if (tipoReferencia) {
+                // Crear versión resumida para la referencia
+                const resumenRespuesta = respuestaBot.length > 300 ? 
+                    respuestaBot.substring(0, 300) + '...' : 
+                    respuestaBot;
+
+                const contenidoReferencia = `**Consulta**: ${mensajeUsuario}\n\n**Respuesta**: ${resumenRespuesta}`;
+
+                await seguimientoService.agregarMensajeReferencia(
+                    userId,
+                    contenidoReferencia,
+                    tipoReferencia,
+                    metadata
+                );
+
+                console.log(`📋 [${userId}] Referencia automática generada: ${tipoReferencia}`);
+            }
+
+        } catch (error) {
+            console.warn('⚠️ Error generando referencia automática:', error.message);
+        }
+    }
+
+    // ===== MÉTODOS EXISTENTES (mantener todos) =====
+
+    /**
+     * ✅ CORREGIDO: Búsqueda de documentos con mejor integración
+     */
+    async buscarDocumentos(consulta, userInfo) {
+        try {
+            const userId = userInfo?.usuario || 'unknown';
+            console.log(`📖 [${userId}] Iniciando búsqueda de documentos: "${consulta}"`);
+
+            if (!documentService.isAvailable()) {
+                console.warn(`⚠️ [${userId}] DocumentService no disponible`);
+                
+                const configInfo = documentService.getConfigInfo();
+                console.log(`📊 Estado del servicio:`, {
+                    searchAvailable: configInfo.searchAvailable,
+                    error: configInfo.error,
+                    endpoint: configInfo.endpoint,
+                    indexName: configInfo.indexName
+                });
+
+                return `⚠️ **Servicio de búsqueda no disponible**\n\n` +
+                       `**Estado**: ${configInfo.error || 'No configurado'}\n\n` +
+                       `**Para habilitar búsqueda de documentos:**\n` +
+                       `• Configurar Azure Search en las variables de entorno\n` +
+                       `• Verificar conectividad con el servicio\n` +
+                       `• Contactar al administrador del sistema\n\n` +
+                       `**Funciones disponibles:**\n` +
+                       `• Consulta de tasas: \`tasas 2025\`\n` +
+                       `• Información personal: \`mi info\`\n` +
+                       `• Chat general con IA`;
+            }
+
+            console.log(`🔍 [${userId}] DocumentService disponible, ejecutando búsqueda...`);
+            
+            const resultado = await documentService.buscarDocumentos(consulta, userId);
+            
+            console.log(`📊 [${userId}] Búsqueda completada, resultado obtenido`);
+            
+            if (!resultado || typeof resultado !== 'string') {
+                console.warn(`⚠️ [${userId}] Resultado inválido de DocumentService:`, typeof resultado);
+                return `❌ **Error en búsqueda**: No se obtuvo resultado válido del servicio de documentos`;
+            }
+
+            if (resultado.includes('No se encontraron documentos') || 
+                resultado.includes('❌ No se encontraron')) {
+                
+                console.log(`💡 [${userId}] No se encontraron documentos, ofreciendo alternativas`);
+                
+                if (consulta.toLowerCase().includes('ajustes.docx') || 
+                    consulta.toLowerCase().includes('ajustes')) {
+                    
+                    return `🔍 **Búsqueda: "${consulta}"**\n\n` +
+                           `❌ **Documento "ajustes.docx" no encontrado**\n\n` +
+                           `**Posibles causas:**\n` +
+                           `• El archivo no está indexado en Azure Search\n` +
+                           `• El documento no existe en el sistema\n` +
+                           `• El nombre del archivo es diferente\n\n` +
+                           `**Alternativas de búsqueda:**\n` +
+                           `• Busca por contenido: "configuración sistema"\n` +
+                           `• Busca por tema: "ajustes configuración"\n` +
+                           `• Busca documentos similares: "parámetros sistema"\n\n` +
+                           `**Otras opciones:**\n` +
+                           `• \`buscar políticas\` - Ver políticas corporativas\n` +
+                           `• \`obtener feriados\` - Consultar días feriados\n` +
+                           `• Describir qué información necesitas del documento`;
+                }
+            }
+
+            console.log(`✅ [${userId}] Búsqueda exitosa, retornando resultado`);
+            return resultado;
+
+        } catch (error) {
+            const userId = userInfo?.usuario || 'unknown';
+            console.error(`❌ [${userId}] Error en búsqueda de documentos:`, error);
+            
+            let errorMessage = `❌ **Error buscando documentos**\n\n`;
+            errorMessage += `**Consulta**: "${consulta}"\n`;
+            errorMessage += `**Error**: ${error.message}\n\n`;
+            
+            if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
+                errorMessage += `**Tipo**: Error de conectividad con Azure Search\n`;
+                errorMessage += `**Solución**: Verificar configuración de red y endpoint\n`;
+            } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
+                errorMessage += `**Tipo**: Error de permisos\n`;
+                errorMessage += `**Solución**: Verificar API Key de Azure Search\n`;
+            } else if (error.message.includes('404') || error.message.includes('Not Found')) {
+                errorMessage += `**Tipo**: Servicio o índice no encontrado\n`;
+                errorMessage += `**Solución**: Verificar endpoint e índice en Azure Search\n`;
+            } else {
+                errorMessage += `**Tipo**: Error interno del servicio\n`;
+                errorMessage += `**Solución**: Contactar soporte técnico\n`;
+            }
+            
+            errorMessage += `\n**Funciones disponibles:**\n`;
+            errorMessage += `• Consulta de tasas: \`tasas 2025\`\n`;
+            errorMessage += `• Información personal: \`mi info\`\n`;
+            errorMessage += `• Chat general con IA`;
+            
+            return errorMessage;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Buscar políticas específicas
+     */
+    async buscarPoliticas(tipoPolitica, userInfo) {
+        try {
+            if (!documentService.isAvailable()) {
+                return `⚠️ **Servicio de políticas no disponible**\n\n` +
+                       `No se puede acceder a las políticas corporativas en este momento.`;
+            }
+
+            const userId = userInfo?.usuario || 'unknown';
+            console.log(`📋 [${userId}] Buscando política: ${tipoPolitica}`);
+
+            const resultado = await documentService.buscarPoliticas(tipoPolitica, userId);
+            
+            return `📋 **Política: ${tipoPolitica.charAt(0).toUpperCase() + tipoPolitica.slice(1)}**\n\n${resultado}`;
+
+        } catch (error) {
+            console.error('❌ Error buscando políticas:', error);
+            return `❌ **Error buscando política de ${tipoPolitica}**: ${error.message}`;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Obtener días feriados
+     */
+    async obtenerDiasFeriados(anio, userInfo) {
+        try {
+            if (!documentService.isAvailable()) {
+                return `⚠️ **Información de feriados no disponible**\n\n` +
+                       `No se puede acceder al calendario de días feriados.`;
+            }
+
+            const userId = userInfo?.usuario || 'unknown';
+            const añoConsulta = anio || new Date().getFullYear();
+            console.log(`📅 [${userId}] Obteniendo feriados para ${añoConsulta}`);
+
+            const resultado = await documentService.obtenerDiasFeriados(añoConsulta, userId);
+            
+            return `📅 **Días Feriados ${añoConsulta}**\n\n${resultado}`;
+
+        } catch (error) {
+            console.error('❌ Error obteniendo feriados:', error);
+            return `❌ **Error obteniendo feriados para ${anio || 'año actual'}**: ${error.message}`;
+        }
+    }
+
+    /**
      * ✅ NUEVO: Consultar tasas de interés de Nova
      */
     async consultarTasasInteres(anio, userToken, userInfo) {
@@ -764,9 +1245,8 @@ class OpenAIService {
                 return "❌ **Error**: Usuario no autenticado para consultar tasas";
             }
 
-            // Extraer información del token/userInfo
             const cveUsuario = userInfo.usuario;
-            const numRI = this.extractNumRIFromToken(userToken) || "7"; // Default "7" si no se encuentra
+            const numRI = this.extractNumRIFromToken(userToken) || "7";
 
             console.log(`💰 [${cveUsuario}] Consultando tasas para año ${anio}`);
 
@@ -828,38 +1308,32 @@ class OpenAIService {
                 return null;
             }
 
-            // Remover 'Bearer ' si está presente
             const cleanToken = token.replace(/^Bearer\s+/, '');
-
-            // Verificar formato JWT
             const tokenParts = cleanToken.split('.');
             if (tokenParts.length !== 3) {
                 return null;
             }
 
-            // Decodificar payload
             const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
             
-            // Buscar NumRI en diferentes posibles campos
             const numRI = payload.NumRI || 
                          payload.numRI || 
                          payload.RI || 
                          payload.ri || 
                          payload.region ||
-                         "7"; // Default
+                         "7";
 
             console.log(`🔍 NumRI extraído del token: ${numRI}`);
             return numRI;
 
         } catch (error) {
             console.warn('⚠️ Error extrayendo NumRI del token:', error.message);
-            return "7"; // Default value
+            return "7";
         }
     }
 
     /**
      * ✅ NUEVO: Formatear tabla de tasas COMPLETAMENTE REDISEÑADO para Teams
-     * Formato simple, limpio y totalmente compatible
      */
     formatearTablaTasas(tasasData, anio, usuario) {
         try {
@@ -867,31 +1341,25 @@ class OpenAIService {
                 return "❌ **Error**: Datos de tasas inválidos";
             }
 
-            // Encabezado principal estilizado pero simple
             let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n\n`;
             tabla += `👤 **Usuario**: ${usuario}  📅 **Año**: ${anio}  🕐 **Actualizado**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
 
-            // Procesar cada mes con formato limpio
             tabla += `📊 **DETALLE POR MES:**\n\n`;
             
             tasasData.forEach((mes, index) => {
                 if (mes.Mes) {
-                    // Encabezado del mes con separador visual
                     tabla += `🗓️ **${mes.Mes.toUpperCase()}**\n`;
                     tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
                     
-                    // Cuenta Vista
                     const vista = mes.vista !== undefined ? `${mes.vista}%` : 'N/A';
                     tabla += `💳 **Cuenta Vista (Ahorros):** ${vista}\n`;
                     
-                    // Depósitos a Plazo Fijo
                     tabla += `📈 **Depósitos a Plazo Fijo:**\n`;
                     const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : 'N/A';
                     const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : 'N/A';
                     const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : 'N/A';
                     tabla += `   🔸 1 mes: ${fijo1}    🔸 3 meses: ${fijo3}    🔸 6 meses: ${fijo6}\n`;
                     
-                    // Otros productos financieros
                     const fap = mes.FAP !== undefined ? `${mes.FAP}%` : 'N/A';
                     const nov = mes.Nov !== undefined ? `${mes.Nov}%` : 'N/A';
                     const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : 'N/A';
@@ -899,18 +1367,15 @@ class OpenAIService {
                     tabla += `🏦 **FAP (Fondo Ahorro):** ${fap}    🔄 **Novación:** ${nov}\n`;
                     tabla += `💸 **Préstamos:** ${prestamos}\n`;
                     
-                    // Espaciado entre meses
                     if (index < tasasData.length - 1) {
                         tabla += `\n`;
                     }
                 }
             });
 
-            // Sección de análisis y recomendaciones
             tabla += `\n\n💡 **ANÁLISIS Y RECOMENDACIONES**\n`;
             tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
 
-            // Encontrar mejores tasas del último mes
             const tasasConDatos = tasasData.filter(mes => 
                 mes.vista !== undefined || mes.fijo6 !== undefined
             );
@@ -920,7 +1385,6 @@ class OpenAIService {
                 
                 tabla += `⭐ **MEJORES OPCIONES ACTUALES (${ultimasTasas.Mes || 'Último mes'}):**\n\n`;
                 
-                // Destacar la mejor tasa para ahorro
                 const tasasAhorro = [
                     { tipo: 'Depósito 6 meses', tasa: ultimasTasas.fijo6, emoji: '🏆' },
                     { tipo: 'FAP Empleados', tasa: ultimasTasas.FAP, emoji: '💼' },
@@ -937,7 +1401,6 @@ class OpenAIService {
                     }
                 }
                 
-                // Información sobre préstamos
                 if (ultimasTasas.Prestamos) {
                     tabla += `💸 **PRÉSTAMOS:** ${ultimasTasas.Prestamos}% - `;
                     if (ultimasTasas.Prestamos < 13) {
@@ -948,7 +1411,6 @@ class OpenAIService {
                 }
             }
 
-            // Análisis de tendencia (si hay suficientes datos)
             if (tasasData.length >= 2) {
                 const primerMes = tasasData[0];
                 const ultimoMes = tasasData[tasasData.length - 1];
@@ -968,12 +1430,10 @@ class OpenAIService {
                 }
             }
 
-            // Descripción de productos (más concisa)
             tabla += `\n📋 **TIPOS DE PRODUCTOS:**\n`;
             tabla += `💳 **Vista:** Disponibilidad inmediata  📈 **Depósitos:** Tasa fija garantizada\n`;
             tabla += `🏦 **FAP:** Fondo empleados  🔄 **Novación:** Renovación automática  💸 **Préstamos:** Créditos personales\n`;
 
-            // Call to action
             tabla += `\n💬 **¿Necesitas asesoría personalizada?** Pregúntame sobre cualquier producto específico.`;
 
             return tabla;
@@ -1024,7 +1484,6 @@ class OpenAIService {
             info += `🔑 **Token**: ${userInfo.token.substring(0, 20)}...${userInfo.token.slice(-5)}\n`;
             info += `🔒 **Estado Token**: ✅ Válido\n`;
             
-            // Mostrar NumRI si está disponible
             const numRI = this.extractNumRIFromToken(userInfo.token);
             if (numRI) {
                 info += `🏦 **Región/RI**: ${numRI}\n`;
@@ -1046,7 +1505,6 @@ class OpenAIService {
                 return "❌ **Error**: No hay token de autenticación disponible";
             }
 
-            // ✅ Lista de endpoints permitidos (por seguridad)
             const endpointsPermitidos = [
                 '/api/user/profile',
                 '/api/user/info',
@@ -1118,7 +1576,6 @@ class OpenAIService {
                 
                 historial = await cosmosService.getConversationHistory(conversationId, userInfo.usuario, 50);
                 
-                // Obtener información adicional de la conversación
                 const conversationInfo = await cosmosService.getConversationInfo(conversationId, userInfo.usuario);
                 
                 estadisticas = {
@@ -1135,11 +1592,9 @@ class OpenAIService {
                 return "📝 **Conversación nueva** - Aún no hay mensajes para resumir";
             }
 
-            // Analizar tipos de mensajes
             const mensajesUsuario = historial.filter(msg => msg.type === 'user').length;
             const mensajesBot = historial.filter(msg => msg.type === 'bot').length;
 
-            // Crear resumen
             let resumen = `📋 **Resumen de Conversación**\n\n`;
             resumen += `👤 **Usuario**: ${userInfo.nombre} (${userInfo.usuario})\n`;
             resumen += `💬 **Total de mensajes**: ${estadisticas.totalMensajes}\n`;
@@ -1149,7 +1604,6 @@ class OpenAIService {
             resumen += `📅 **Conversación iniciada**: ${estadisticas.conversacionCreada}\n`;
             resumen += `💾 **Persistencia**: ${estadisticas.persistencia}\n\n`;
 
-            // Mostrar últimos mensajes
             const ultimosMensajes = historial.slice(-6);
             resumen += `📝 **Últimos mensajes**:\n`;
             ultimosMensajes.forEach((msg, index) => {
@@ -1169,88 +1623,6 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Formateo de historial con mejor contexto
-     */
-    formatearHistorial(historial, userInfo) {
-        const fechaActual = DateTime.now().setZone('America/Mexico_City');
-        
-        const userContext = userInfo ? 
-            `Usuario autenticado: ${userInfo.nombre} (${userInfo.usuario})` : 
-            'Usuario no autenticado';
-
-        const persistenciaInfo = cosmosService.isAvailable() ? 
-            'Persistencia: Cosmos DB activa' : 
-            'Persistencia: Solo memoria temporal';
-
-        const documentosInfo = documentService.isAvailable() ?
-            'Búsqueda de Documentos: Azure Search activo con embeddings vectoriales' :
-            'Búsqueda de Documentos: No disponible';
-
-        const mensajes = [{
-            role: "system",
-            content: `Eres un asistente corporativo inteligente para Nova Corporation.
-
-🔷 **Contexto del Usuario:**
-${userContext}
-
-🔷 **Fecha y Hora Actual:**
-${fechaActual.toFormat('dd/MM/yyyy HH:mm:ss')} (${fechaActual.zoneName})
-
-🔷 **Estado del Sistema:**
-${persistenciaInfo}
-${documentosInfo}
-
-🔷 **Tus Capacidades:**
-• Conversación natural e inteligente con persistencia
-• Consulta de tasas de interés de Nova (herramienta especializada)
-• Búsqueda de documentos corporativos con IA vectorial
-• Consulta de políticas empresariales (vacaciones, horarios, prestaciones, etc.)
-• Información de días feriados oficiales
-• Acceso a información del usuario autenticado
-• Consultas a APIs internas de Nova
-• Análisis y explicaciones detalladas
-• Historial de conversaciones (${cosmosService.isAvailable() ? 'persistente' : 'temporal'})
-
-🔷 **Herramientas Especiales:**
-• Consulta de tasas de interés por año
-• Búsqueda vectorial de documentos corporativos
-• Políticas específicas (RH, seguridad, prestaciones)
-• Calendario de días feriados
-• Información de usuario completa
-• Resumen de conversaciones
-• Consultas a APIs de Nova
-
-🔷 **Personalidad:**
-• Profesional pero amigable
-• Útil y proactivo para temas financieros
-• Claro y conciso en respuestas
-• Enfocado en productividad corporativa y servicios financieros
-
-🔷 **Importante:**
-• Siempre mantén la información del usuario segura
-• Para consultas de tasas, usa la herramienta especializada
-• Si no tienes información específica, sugiere cómo obtenerla
-• Las conversaciones se guardan ${cosmosService.isAvailable() ? 'permanentemente' : 'temporalmente'}`
-        }];
-        
-        // Procesar historial
-        if (historial && historial.length > 0) {
-            const recientes = historial.slice(-8); // Mantener solo los 8 más recientes
-            recientes.forEach(item => {
-                if (item.message && item.message.trim()) {
-                    const role = item.type === 'user' || item.userId !== 'bot' ? "user" : "assistant";
-                    mensajes.push({
-                        role: role,
-                        content: item.message.trim()
-                    });
-                }
-            });
-        }
-
-        return mensajes;
-    }
-
-    /**
      * ✅ MEJORADO: Respuesta cuando OpenAI no está disponible
      */
     createUnavailableResponse() {
@@ -1263,7 +1635,11 @@ ${documentosInfo}
         message += '**Funciones limitadas disponibles:**\n';
         message += '• `mi info` - Ver tu información\n';
         message += '• `logout` - Cerrar sesión\n';
-        message += '• `ayuda` - Ver comandos disponibles\n\n';
+        message += '• `ayuda` - Ver comandos disponibles\n';
+        
+        if (seguimientoService.isAvailable()) {
+            message += '• `historial` - Ver seguimiento de consultas\n';
+        }
         
         if (cosmosService.isAvailable()) {
             message += '✅ **Persistencia activa**: Tus conversaciones se guardan en Cosmos DB\n\n';
@@ -1316,6 +1692,10 @@ ${documentosInfo}
         message += `• \`mi info\` - Ver tu información\n`;
         message += `• \`ayuda\` - Ver comandos disponibles\n`;
         
+        if (seguimientoService.isAvailable()) {
+            message += `• \`historial\` - Ver seguimiento de consultas\n`;
+        }
+        
         if (cosmosService.isAvailable()) {
             message += `• Tu historial se mantiene guardado en Cosmos DB`;
         }
@@ -1327,7 +1707,7 @@ ${documentosInfo}
     }
 
     /**
-     * ✅ MEJORADO: Estadísticas del servicio con Cosmos DB y DocumentService
+     * ✅ MEJORADO: Estadísticas del servicio con seguimiento
      */
     getServiceStats() {
         return {
@@ -1345,10 +1725,12 @@ ${documentosInfo}
                 vector_search: documentService.isAvailable() && documentService.getConfigInfo().features.vectorSearch,
                 policy_search: documentService.isAvailable(),
                 holiday_search: documentService.isAvailable(),
-                cosmos_persistence: cosmosService.isAvailable()
+                cosmos_persistence: cosmosService.isAvailable(),
+                seguimiento_contextual: seguimientoService.isAvailable()
             },
             cosmosDB: cosmosService.getConfigInfo(),
             documentService: documentService.getConfigInfo(),
+            seguimiento: seguimientoService.obtenerEstadisticasGenerales(),
             timestamp: new Date().toISOString()
         };
     }
@@ -1369,6 +1751,10 @@ ${documentosInfo}
             documentService: {
                 disponible: documentService.isAvailable(),
                 config: documentService.getConfigInfo()
+            },
+            seguimiento: {
+                disponible: seguimientoService.isAvailable(),
+                config: seguimientoService.obtenerEstadisticasGenerales()
             }
         };
 

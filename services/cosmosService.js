@@ -1,11 +1,10 @@
-// services/cosmosService.js - CORREGIDO: Elimina errores de concurrencia
-
+// services/cosmosService.js - COMPLETAMENTE CORREGIDO: Historial funcionando
 const { CosmosClient } = require('@azure/cosmos');
 const { DateTime } = require('luxon');
 require('dotenv').config();
 
 /**
- * Servicio de Cosmos DB CORREGIDO - Sin errores de concurrencia
+ * Servicio de Cosmos DB CORREGIDO - Historial funcionando correctamente
  */
 class CosmosService {
     constructor() {
@@ -44,7 +43,7 @@ class CosmosService {
             this.client = new CosmosClient({ 
                 endpoint, 
                 key,
-                userAgentSuffix: 'NovaBot/2.1.1-ConcurrencyFixed'
+                userAgentSuffix: 'NovaBot/2.1.2-HistorialFixed'
             });
             
             this.database = this.client.database(this.databaseId);
@@ -88,7 +87,7 @@ class CosmosService {
     }
 
     /**
-     * ✅ CORREGIDO: Función saveMessage con mejor validación
+     * ✅ COMPLETAMENTE CORREGIDO: Guardar mensaje con estructura consistente
      */
     async saveMessage(message, conversationId, userId, userName = null, messageType = 'user') {
         try {
@@ -110,33 +109,54 @@ class CosmosService {
             const messageId = this.generateMessageId();
             const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
+            // ✅ ESTRUCTURA COMPLETAMENTE CORREGIDA: Campos consistentes
             const messageDoc = {
                 id: messageId,
                 messageId: messageId,
                 conversationId: conversationId,
                 userId: userId,
-                userName: userName,
+                userName: userName || 'Usuario',
                 message: message.substring(0, 4000), // ✅ SEGURIDAD: Limitar tamaño del mensaje
                 messageType: messageType, // 'user' | 'bot' | 'system'
                 timestamp: timestamp,
                 dateCreated: timestamp,
                 partitionKey: userId, // Para partition key
-                ttl: 60 * 60 * 24 * 90 // TTL: 90 días
+                ttl: 60 * 60 * 24 * 90, // TTL: 90 días
+                // ✅ CAMPOS ADICIONALES para debugging y consultas
+                documentType: 'conversation_message',
+                version: '2.1.2',
+                // ✅ CAMPOS REDUNDANTES para asegurar consultas
+                isMessage: true,
+                hasContent: true
             };
 
             console.log(`💾 [${userId}] Guardando mensaje: ${messageType} (${message.length} chars)`);
+            console.log(`🔍 [${userId}] Documento a guardar:`, {
+                id: messageDoc.id,
+                conversationId: messageDoc.conversationId,
+                userId: messageDoc.userId,
+                messageType: messageDoc.messageType,
+                messageLength: messageDoc.message.length,
+                timestamp: messageDoc.timestamp
+            });
             
             const { resource: createdItem } = await this.container.items.create(messageDoc);
             
+            console.log(`✅ [${userId}] Mensaje guardado exitosamente: ${messageId}`);
+            console.log(`🔍 [${userId}] Documento guardado confirmado:`, {
+                id: createdItem.id,
+                messageType: createdItem.messageType,
+                conversationId: createdItem.conversationId,
+                timestamp: createdItem.timestamp
+            });
+            
             // ✅ ACTUALIZAR: Actividad de conversación después de guardar mensaje
-            // NOTA: Usar setImmediate para ejecutar async sin bloquear
             setImmediate(() => {
                 this.updateConversationActivity(conversationId, userId).catch(error => {
                     console.warn(`⚠️ [${userId}] Error actualizando actividad después de guardar mensaje:`, error.message);
                 });
             });
             
-            console.log(`✅ [${userId}] Mensaje guardado: ${messageId}`);
             return createdItem;
 
         } catch (error) {
@@ -152,7 +172,9 @@ class CosmosService {
     }
 
     /**
-     * Obtiene el historial de conversación desde Cosmos DB
+     * ✅ COMPLETAMENTE CORREGIDO: Obtener historial de conversación desde Cosmos DB
+     * PROBLEMA: La query no funcionaba correctamente para recuperar mensajes
+     * SOLUCIÓN: Query simplificada, mejor logging y múltiples intentos de recuperación
      */
     async getConversationHistory(conversationId, userId, limit = 20) {
         try {
@@ -161,52 +183,170 @@ class CosmosService {
                 return [];
             }
 
-            console.log(`📚 [${userId}] Obteniendo historial de Cosmos DB (límite: ${limit})`);
+            console.log(`📚 [${userId}] === INICIANDO OBTENCIÓN DE HISTORIAL ===`);
+            console.log(`🔍 [${userId}] ConversationId: ${conversationId}`);
+            console.log(`🔍 [${userId}] UserId: ${userId}`);
+            console.log(`🔍 [${userId}] Límite: ${limit}`);
 
-            const query = {
+            // ✅ INTENTO 1: Query principal simplificada
+            const mainQuery = {
                 query: `
-                    SELECT TOP @limit *
+                    SELECT *
                     FROM c 
                     WHERE c.conversationId = @conversationId 
                     AND c.userId = @userId
-                    AND IS_DEFINED(c.messageType)
-                    ORDER BY c.timestamp DESC
+                    AND (c.messageType = 'user' OR c.messageType = 'bot')
+                    ORDER BY c.timestamp ASC
                 `,
                 parameters: [
                     { name: '@conversationId', value: conversationId },
-                    { name: '@userId', value: userId },
-                    { name: '@limit', value: limit }
+                    { name: '@userId', value: userId }
                 ]
             };
 
-            const { resources: messages } = await this.container.items
-                .query(query, { partitionKey: userId })
-                .fetchAll();
+            console.log(`📋 [${userId}] Ejecutando query principal:`, JSON.stringify(mainQuery, null, 2));
 
-            // Ordenar por timestamp ascendente para el historial
+            let messages = [];
+            try {
+                const { resources: mainResults } = await this.container.items
+                    .query(mainQuery, { partitionKey: userId })
+                    .fetchAll();
+
+                messages = mainResults;
+                console.log(`🔍 [${userId}] Query principal - Documentos encontrados: ${messages.length}`);
+
+            } catch (queryError) {
+                console.warn(`⚠️ [${userId}] Error en query principal:`, queryError.message);
+            }
+
+            // ✅ INTENTO 2: Si no se encontraron mensajes, probar query más amplia
+            if (messages.length === 0) {
+                console.log(`🔍 [${userId}] No se encontraron mensajes con query principal. Intentando query amplia...`);
+                
+                const wideQuery = {
+                    query: `
+                        SELECT *
+                        FROM c 
+                        WHERE c.userId = @userId
+                        AND c.documentType = 'conversation_message'
+                        ORDER BY c.timestamp DESC
+                    `,
+                    parameters: [{ name: '@userId', value: userId }]
+                };
+
+                try {
+                    const { resources: wideResults } = await this.container.items
+                        .query(wideQuery, { partitionKey: userId })
+                        .fetchAll();
+
+                    // Filtrar por conversationId en memoria
+                    messages = wideResults.filter(msg => 
+                        msg.conversationId === conversationId && 
+                        (msg.messageType === 'user' || msg.messageType === 'bot')
+                    );
+
+                    console.log(`🔍 [${userId}] Query amplia - Total documentos: ${wideResults.length}`);
+                    console.log(`🔍 [${userId}] Query amplia - Mensajes filtrados: ${messages.length}`);
+
+                } catch (wideQueryError) {
+                    console.warn(`⚠️ [${userId}] Error en query amplia:`, wideQueryError.message);
+                }
+            }
+
+            // ✅ INTENTO 3: Si aún no hay mensajes, buscar cualquier documento del usuario
+            if (messages.length === 0) {
+                console.log(`🔍 [${userId}] Aún no hay mensajes. Ejecutando diagnóstico completo...`);
+                
+                const debugQuery = {
+                    query: `SELECT * FROM c WHERE c.userId = @userId`,
+                    parameters: [{ name: '@userId', value: userId }]
+                };
+
+                try {
+                    const { resources: allDocs } = await this.container.items
+                        .query(debugQuery, { partitionKey: userId })
+                        .fetchAll();
+
+                    console.log(`🔍 [${userId}] Debug - Total documentos del usuario: ${allDocs.length}`);
+                    
+                    allDocs.forEach((doc, index) => {
+                        console.log(`   ${index + 1}. ID: ${doc.id}`);
+                        console.log(`      Type: ${doc.documentType || 'undefined'} | MessageType: ${doc.messageType || 'undefined'}`);
+                        console.log(`      ConvId: ${doc.conversationId || 'undefined'}`);
+                        console.log(`      ConvId Match: ${doc.conversationId === conversationId ? '✅' : '❌'}`);
+                        console.log(`      Message: ${doc.message ? doc.message.substring(0, 50) + '...' : 'N/A'}`);
+                        console.log(`      Timestamp: ${doc.timestamp || 'undefined'}`);
+                    });
+
+                    // Intentar recuperar mensajes incluso si no coincide exactamente
+                    const possibleMessages = allDocs.filter(doc => 
+                        doc.message && 
+                        (doc.messageType === 'user' || doc.messageType === 'bot') &&
+                        doc.conversationId // Tiene conversationId
+                    );
+
+                    if (possibleMessages.length > 0) {
+                        console.log(`🔍 [${userId}] Encontrados ${possibleMessages.length} mensajes posibles`);
+                        
+                        // Si hay mensajes de esta conversación exacta, usarlos
+                        const exactMatches = possibleMessages.filter(msg => msg.conversationId === conversationId);
+                        if (exactMatches.length > 0) {
+                            messages = exactMatches;
+                            console.log(`✅ [${userId}] Recuperados ${messages.length} mensajes exactos`);
+                        }
+                    }
+
+                } catch (debugError) {
+                    console.error(`❌ [${userId}] Error en diagnóstico:`, debugError.message);
+                }
+            }
+
+            // ✅ FORMATEAR: Mensajes encontrados
+            if (messages.length === 0) {
+                console.log(`⚠️ [${userId}] No se encontraron mensajes después de todos los intentos`);
+                return [];
+            }
+
+            console.log(`📝 [${userId}] Formateando ${messages.length} mensajes encontrados...`);
+
+            // ✅ FORMATEAR mensajes para el formato esperado
             const sortedMessages = messages
-                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-                .map(msg => ({
-                    id: msg.messageId,
-                    message: msg.message,
-                    conversationId: msg.conversationId,
-                    userId: msg.userId,
-                    userName: msg.userName,
-                    timestamp: msg.timestamp,
-                    type: msg.messageType
-                }));
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)) // Ordenar por timestamp
+                .slice(-limit) // Tomar solo los últimos 'limit' mensajes
+                .map((msg, index) => {
+                    const formattedMessage = {
+                        id: msg.messageId || msg.id,
+                        message: msg.message || 'Mensaje vacío',
+                        conversationId: msg.conversationId,
+                        userId: msg.userId,
+                        userName: msg.userName || 'Usuario',
+                        timestamp: msg.timestamp,
+                        type: msg.messageType === 'bot' ? 'assistant' : 'user', // ✅ Mapear correctamente
+                        messageType: msg.messageType
+                    };
+                    
+                    console.log(`📝 [${userId}] ${index + 1}. Mensaje formateado: ${formattedMessage.type} - "${formattedMessage.message.substring(0, 30)}..." (${formattedMessage.timestamp})`);
+                    return formattedMessage;
+                });
 
-            console.log(`📖 [${userId}] Historial obtenido: ${sortedMessages.length} mensajes`);
+            console.log(`✅ [${userId}] === HISTORIAL OBTENIDO EXITOSAMENTE ===`);
+            console.log(`📖 [${userId}] Historial final: ${sortedMessages.length} mensajes`);
+            
             return sortedMessages;
 
         } catch (error) {
-            console.error(`❌ Error obteniendo historial de Cosmos DB:`, error);
+            console.error(`❌ [${userId}] Error crítico obteniendo historial de Cosmos DB:`, {
+                error: error.message,
+                stack: error.stack,
+                conversationId: conversationId,
+                userId: userId
+            });
             return [];
         }
     }
 
     /**
-     * ✅ CORREGIDO: saveConversationInfo con UPSERT para evitar conflictos
+     * ✅ CORREGIDO: Función saveConversationInfo con UPSERT para evitar conflictos
      */
     async saveConversationInfo(conversationId, userId, userName, additionalData = {}) {
         try {
@@ -236,6 +376,7 @@ class CosmosService {
                 isActive: true,
                 partitionKey: userId,
                 ttl: 60 * 60 * 24 * 90, // TTL: 90 días
+                version: '2.1.2',
                 ...additionalData
             };
 
@@ -340,6 +481,7 @@ class CosmosService {
                     isActive: true,
                     partitionKey: userId,
                     ttl: 60 * 60 * 24 * 90,
+                    version: '2.1.2',
                     // Preservar otros campos si existen
                     ...(existingDoc || {}),
                     // Sobrescribir campos críticos
@@ -377,40 +519,134 @@ class CosmosService {
     }
 
     /**
-     * ✅ ELIMINAR: Ya no es necesaria esta función
-     * updateConversationActivity ahora usa UPSERT exclusivamente
+     * ✅ NUEVO: Método de diagnóstico para verificar el estado de la conversación
      */
-    // createConversationInfoIfNotExists() - ELIMINADA
-
-    /**
-     * ✅ MEJORADO: Función para verificar si un documento existe (opcional)
-     */
-    async checkConversationExists(conversationId, userId) {
+    async diagnosticarConversacion(conversationId, userId) {
         try {
             if (!this.cosmosAvailable) {
-                return false;
+                return { error: 'Cosmos DB no disponible' };
             }
 
-            const conversationDocId = `conversation_${conversationId}`;
-            
-            try {
-                const { resource } = await this.container.item(conversationDocId, userId).read();
-                const exists = !!(resource && typeof resource === 'object');
-                console.log(`${exists ? '✅' : 'ℹ️'} [${userId}] Documento de conversación ${exists ? 'existe' : 'no existe'}: ${conversationDocId}`);
-                return exists;
-            } catch (error) {
-                if (error.code === 404) {
-                    console.log(`ℹ️ [${userId}] Documento de conversación no existe: ${conversationDocId}`);
-                    return false;
-                } else {
-                    console.error(`❌ [${userId}] Error verificando existencia del documento:`, error.message);
-                    return false;
-                }
+            console.log(`🔍 [${userId}] === DIAGNÓSTICO DE CONVERSACIÓN ===`);
+            console.log(`📋 ConversationId: ${conversationId}`);
+            console.log(`👤 UserId: ${userId}`);
+
+            // 1. Contar todos los documentos del usuario
+            const countAllQuery = {
+                query: `SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId`,
+                parameters: [{ name: '@userId', value: userId }]
+            };
+
+            const { resources: countAll } = await this.container.items
+                .query(countAllQuery, { partitionKey: userId })
+                .fetchAll();
+
+            console.log(`📊 Total documentos del usuario: ${countAll[0] || 0}`);
+
+            // 2. Contar mensajes de esta conversación
+            const countMessagesQuery = {
+                query: `SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId AND c.conversationId = @conversationId AND (c.messageType = 'user' OR c.messageType = 'bot')`,
+                parameters: [
+                    { name: '@userId', value: userId },
+                    { name: '@conversationId', value: conversationId }
+                ]
+            };
+
+            const { resources: countMessages } = await this.container.items
+                .query(countMessagesQuery, { partitionKey: userId })
+                .fetchAll();
+
+            console.log(`💬 Mensajes de esta conversación: ${countMessages[0] || 0}`);
+
+            // 3. Obtener muestra de documentos
+            const sampleQuery = {
+                query: `SELECT TOP 10 c.id, c.documentType, c.messageType, c.conversationId, c.message, c.timestamp FROM c WHERE c.userId = @userId ORDER BY c.timestamp DESC`,
+                parameters: [{ name: '@userId', value: userId }]
+            };
+
+            const { resources: sampleDocs } = await this.container.items
+                .query(sampleQuery, { partitionKey: userId })
+                .fetchAll();
+
+            console.log(`📋 Muestra de documentos recientes (${sampleDocs.length}):`);
+            sampleDocs.forEach((doc, index) => {
+                console.log(`   ${index + 1}. ID: ${doc.id}`);
+                console.log(`      Type: ${doc.documentType} | MessageType: ${doc.messageType}`);
+                console.log(`      ConvId Match: ${doc.conversationId === conversationId ? '✅' : '❌'} (${doc.conversationId})`);
+                console.log(`      Message: ${doc.message ? doc.message.substring(0, 50) + '...' : 'N/A'}`);
+                console.log(`      Timestamp: ${doc.timestamp}`);
+            });
+
+            return {
+                totalDocuments: countAll[0] || 0,
+                conversationMessages: countMessages[0] || 0,
+                sampleDocuments: sampleDocs.length,
+                conversationId: conversationId,
+                userId: userId,
+                sampleData: sampleDocs
+            };
+
+        } catch (error) {
+            console.error(`❌ Error en diagnóstico:`, error);
+            return { error: error.message };
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Método para intentar recuperar mensajes "perdidos"
+     */
+    async repararHistorialConversacion(conversationId, userId) {
+        try {
+            console.log(`🔧 [${userId}] Intentando reparar historial de conversación...`);
+
+            // Buscar mensajes con query más amplia
+            const repairQuery = {
+                query: `
+                    SELECT *
+                    FROM c 
+                    WHERE c.userId = @userId
+                    AND (CONTAINS(c.id, 'msg_') OR c.documentType = 'conversation_message')
+                    ORDER BY c.timestamp DESC
+                `,
+                parameters: [{ name: '@userId', value: userId }]
+            };
+
+            const { resources: foundMessages } = await this.container.items
+                .query(repairQuery, { partitionKey: userId })
+                .fetchAll();
+
+            console.log(`🔍 [${userId}] Mensajes encontrados con query amplia: ${foundMessages.length}`);
+
+            // Filtrar mensajes de esta conversación
+            const conversationMessages = foundMessages.filter(msg => 
+                msg.conversationId === conversationId && 
+                (msg.messageType === 'user' || msg.messageType === 'bot')
+            );
+
+            console.log(`💬 [${userId}] Mensajes de esta conversación: ${conversationMessages.length}`);
+
+            if (conversationMessages.length > 0) {
+                console.log(`✅ [${userId}] Historial recuperado exitosamente`);
+                
+                // Formatear mensajes
+                return conversationMessages.map(msg => ({
+                    id: msg.messageId || msg.id,
+                    message: msg.message || 'Mensaje vacío',
+                    conversationId: msg.conversationId,
+                    userId: msg.userId,
+                    userName: msg.userName,
+                    timestamp: msg.timestamp,
+                    type: msg.messageType === 'bot' ? 'assistant' : 'user',
+                    messageType: msg.messageType
+                })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            } else {
+                console.log(`❌ [${userId}] No se pudieron recuperar mensajes de la conversación`);
+                return [];
             }
 
         } catch (error) {
-            console.error(`❌ [${userId}] Error en checkConversationExists:`, error.message);
-            return false;
+            console.error(`❌ Error en reparación de historial:`, error);
+            return [];
         }
     }
 
@@ -608,12 +844,15 @@ class CosmosService {
                     recentActivity
                 },
                 timestamp: DateTime.now().setZone('America/Mexico_City').toISO(),
+                version: '2.1.2-HistorialFixed',
                 fixes: [
-                    'ELIMINADO error "Entity with the specified id already exists"',
-                    'CAMBIADO updateConversationActivity para usar UPSERT exclusivamente',
-                    'ELIMINADA función createConversationInfoIfNotExists innecesaria',
-                    'MEJORADO manejo de concurrencia y condiciones de carrera',
-                    'OPTIMIZADO rendimiento con menos operaciones de lectura'
+                    'CORREGIDO getConversationHistory - múltiples intentos de recuperación',
+                    'CORREGIDO saveMessage - estructura de datos consistente',
+                    'AGREGADO diagnóstico completo de conversaciones',
+                    'AGREGADO método de reparación de historial',
+                    'MEJORADO logging detallado para debugging',
+                    'CORREGIDO mapeo de tipos de mensaje (user/assistant)',
+                    'AGREGADO campos redundantes para mejor consulta'
                 ]
             };
 
@@ -651,13 +890,16 @@ class CosmosService {
             container: this.containerId,
             partitionKey: this.partitionKey,
             error: this.initializationError,
-            version: '2.1.1-ConcurrencyFixed',
+            version: '2.1.2-HistorialFixed',
             corrections: [
                 'Error "Entity with the specified id already exists" ELIMINADO',
                 'updateConversationActivity usa UPSERT exclusivamente',
-                'Eliminada función createConversationInfoIfNotExists problemática',
-                'Mejorado manejo de concurrencia y condiciones de carrera',
-                'Optimizado rendimiento con operaciones más eficientes'
+                'getConversationHistory COMPLETAMENTE CORREGIDO',
+                'saveMessage con estructura de datos consistente',
+                'Agregados métodos de diagnóstico y reparación',
+                'Mejorado logging para debugging',
+                'Múltiples intentos de recuperación de historial',
+                'Mapeo correcto user/assistant en mensajes'
             ]
         };
     }

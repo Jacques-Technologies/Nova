@@ -5,7 +5,7 @@ const { CardFactory } = require('botbuilder');
 const axios = require('axios');
 const openaiService = require('../services/openaiService');
 const cosmosService = require('../services/cosmosService');
-const conversationService = require('../services/conversationService');
+const conversationService = require('../services/conversationService'); // ✅ nuevo
 require('dotenv').config();
 
 class TeamsBot extends DialogBot {
@@ -38,12 +38,13 @@ class TeamsBot extends DialogBot {
      */
     async showConversationHistory(context, userId, conversationId) {
         try {
+            const userInfo = await this.getUserInfo(userId);
+            const pk = userInfo.usuario; // ✅ partition key consistente
             let historial = [];
+            
             if (cosmosService.isAvailable()) {
-                // Recuperar los últimos 5 mensajes desde Cosmos DB
-                historial = await cosmosService.getConversationHistory(conversationId, userId, 5);
+                historial = await cosmosService.getConversationHistory(conversationId, pk, 5);
             } else {
-                // Recuperar historial desde memoria (ConversationService)
                 historial = await conversationService.getConversationHistory(conversationId, 5);
             }
 
@@ -52,18 +53,14 @@ class TeamsBot extends DialogBot {
                 return;
             }
 
-            // Construir un mensaje legible con los últimos mensajes
-            let respuesta = '🗒️ **Historial de la conversación (últimos 5 mensajes)**\n\n';
-            historial.forEach((msg, index) => {
-                // Determinar el tipo de mensaje (usuario o bot) dependiendo del origen
-                const tipo = msg.type === 'user' || msg.userId !== 'bot' ? '👤 Usuario' : '🤖 Bot';
-                // Obtener el contenido; algunos servicios utilizan 'message' y otros 'message'
-                const contenido = msg.message || msg.content || '';
-                const texto = contenido.length > 200 ? contenido.substring(0, 200) + '…' : contenido;
-                respuesta += `${index + 1}. ${tipo}: ${texto}\n`;
+            const lines = historial.map(m => {
+                const who = m.type === 'user' ? '👤' : '🤖';
+                const text = (m.message || '').slice(0, 200);
+                return `${who} ${text}`;
             });
 
-            await context.sendActivity(respuesta);
+            await context.sendActivity(`🗂️ **Últimos 5 mensajes**\n\n${lines.join('\n')}`);
+            
         } catch (error) {
             console.error('Error mostrando historial de conversación:', error);
             await context.sendActivity('❌ Error obteniendo el historial de la conversación.');
@@ -173,7 +170,7 @@ class TeamsBot extends DialogBot {
             
             await cosmosService.saveConversationInfo(
                 conversationId,
-                userId,
+                userInfo?.usuario, // ✅ usar usuario corporativo como partition key
                 userInfo?.nombre || 'Usuario',
                 {
                     userInfo: userInfo,
@@ -263,8 +260,11 @@ class TeamsBot extends DialogBot {
 
             // ✅ NUEVO: Asegurar que la conversación esté inicializada en Cosmos DB
             const conversationId = context.activity.conversation.id;
+            const userInfo = await this.getUserInfo(userId);
+            const pk = userInfo.usuario; // ✅ partition key consistente
+            
             if (cosmosService.isAvailable()) {
-                const conversationExists = await cosmosService.getConversationInfo(conversationId, userId);
+                const conversationExists = await cosmosService.getConversationInfo(conversationId, pk);
                 if (!conversationExists) {
                     console.log(`📝 [${userId}] Inicializando conversación perdida en Cosmos DB`);
                     await this.initializeConversation(context, userId);
@@ -285,12 +285,10 @@ class TeamsBot extends DialogBot {
             // Comandos de historial y resumen
             const lowerText = text.toLowerCase();
             if (lowerText.includes('historial') && !lowerText.includes('resumen')) {
-                // Mostrar historial de conversación (últimos 5 mensajes)
                 await this.showConversationHistory(context, userId, conversationId);
                 return await next();
             }
             if (lowerText.includes('resumen')) {
-                // Mostrar resumen de conversación utilizando OpenAI
                 await this.showConversationSummary(context, userId, conversationId);
                 return await next();
             }
@@ -370,8 +368,9 @@ class TeamsBot extends DialogBot {
             if (cosmosService.isAvailable()) {
                 try {
                     const conversationId = context.activity.conversation.id;
-                    const conversationInfo = await cosmosService.getConversationInfo(conversationId, userId);
-                    const historial = await cosmosService.getConversationHistory(conversationId, userId, 100);
+                    const pk = userInfo.usuario; // ✅ partition key consistente
+                    const conversationInfo = await cosmosService.getConversationInfo(conversationId, pk);
+                    const historial = await cosmosService.getConversationHistory(conversationId, pk, 100);
                     
                     infoMessage += `💾 **Persistencia**: ✅ Cosmos DB activa\n`;
                     infoMessage += `📊 **Mensajes guardados**: ${historial.length}\n`;

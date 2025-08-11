@@ -136,14 +136,19 @@ class SeguimientoService {
 
                 console.log(`🗑️ [${userId}] Eliminando ${mensajesParaEliminar.length} mensajes antiguos`);
 
-                // Eliminar de Cosmos DB los mensajes antiguos
+                // Eliminar de Cosmos DB los mensajes antiguos, ignorando 404
                 if (this.cosmosAvailable) {
                     for (const msgAntiguo of mensajesParaEliminar) {
                         try {
                             await cosmosService.container.item(msgAntiguo.id, userId).delete();
                             console.log(`✅ [${userId}] Eliminado de Cosmos DB: ${msgAntiguo.id} (#${msgAntiguo.numeroReferencia})`);
                         } catch (deleteError) {
-                            console.warn(`⚠️ [${userId}] Error eliminando ${msgAntiguo.id}:`, deleteError.message);
+                            // Ignorar si el documento no existe
+                            if (deleteError.code === 404 || deleteError.message.includes('NotFound')) {
+                                console.log(`ℹ️ [${userId}] Mensaje ${msgAntiguo.id} no encontrado en Cosmos DB, ignorando`);
+                            } else {
+                                console.warn(`⚠️ [${userId}] Error eliminando ${msgAntiguo.id}:`, deleteError.message);
+                            }
                         }
                     }
                 }
@@ -417,7 +422,12 @@ class SeguimientoService {
                         eliminados++;
                         console.log(`🗑️ [${userId}] Eliminado: ${mensaje.id} (#${mensaje.numeroReferencia})`);
                     } catch (deleteError) {
-                        console.warn(`⚠️ [${userId}] Error eliminando ${mensaje.id}:`, deleteError.message);
+                        // Ignorar si el documento no existe
+                        if (deleteError.code === 404 || deleteError.message.includes('NotFound')) {
+                            console.log(`ℹ️ [${userId}] Mensaje ${mensaje.id} no encontrado en Cosmos DB, ignorando`);
+                        } else {
+                            console.warn(`⚠️ [${userId}] Error eliminando ${mensaje.id}:`, deleteError.message);
+                        }
                     }
                 }
                 console.log(`✅ [${userId}] Eliminados ${eliminados}/${mensajes.length} mensajes de Cosmos DB`);

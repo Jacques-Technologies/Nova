@@ -314,30 +314,28 @@ class TeamsBot extends DialogBot {
     async showConversationSummary(context, userId, conversationId) {
         try {
             const userInfo = await this.getUserInfo(userId);
-            
-            if (!cosmosService.isAvailable()) {
-                await context.sendActivity(
-                    `📋 **Resumen de Conversación**\n\n` +
-                    `👤 **Usuario**: ${userInfo.nombre} (${userInfo.usuario})\n` +
-                    `💾 **Estado**: Solo memoria temporal - No hay historial persistente\n\n` +
-                    `⚠️ Para tener historial persistente, configura Cosmos DB en el sistema.`
-                );
-                return;
+            // Obtener último historial de hasta 5 mensajes
+            let messages = [];
+            if (cosmosService.isAvailable()) {
+                const pk = userInfo.usuario;
+                messages = await cosmosService.getConversationHistory(conversationId, pk, 5);
+            } else {
+                messages = await conversationService.getConversationHistory(conversationId, 5);
             }
-
-            console.log(`📊 [${userId}] Generando resumen de conversación...`);
-            
-            // Usar OpenAI para generar resumen inteligente
+            // Formatear para OpenAI
+            const history = messages.map(m => ({
+                role: m.type === 'user' ? 'user' : 'assistant',
+                content: m.message
+            }));
+            console.log(`📊 [${userId}] Generando resumen de conversación con ${history.length} mensajes`);
             const response = await this.openaiService.procesarMensaje(
                 'Genera un resumen de mi conversación actual',
-                [],
+                history,
                 userInfo.token,
                 userInfo,
                 conversationId
             );
-
             await this.sendResponse(context, response);
-            
         } catch (error) {
             console.error(`Error mostrando resumen:`, error);
             await context.sendActivity('❌ Error generando resumen de conversación.');

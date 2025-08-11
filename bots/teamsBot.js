@@ -36,17 +36,21 @@ class TeamsBot extends DialogBot {
      * @param {string} userId Identificador del usuario
      * @param {string} conversationId Identificador de la conversación
      */
-    async showConversationHistory(context, userId, conversationId) {
-        try {
-            const userInfo = await this.getUserInfo(userId);
-            const pk = userInfo.usuario; // ✅ partition key consistente
-            let historial = [];
-            
-            if (cosmosService.isAvailable()) {
-                historial = await cosmosService.getConversationHistory(conversationId, pk, 5);
-            } else {
-                historial = await conversationService.getConversationHistory(conversationId, 5);
-            }
+        async showConversationHistory(context, userId, conversationId) {
+            try {
+                const userInfo = await this.getUserInfo(userId);
+                const pk = userInfo.usuario; // ✅ partition key consistente
+                let historial = [];
+                
+                if (cosmosService.isAvailable()) {
+                    historial = await cosmosService.getConversationHistory(conversationId, pk, 5);
+                    if (!historial || historial.length === 0) {
+                        console.log(`ℹ️ [${userId}] No hay historial en Cosmos DB, usando memoria temporal`);
+                        historial = await conversationService.getConversationHistory(conversationId, 5);
+                    }
+                } else {
+                    historial = await conversationService.getConversationHistory(conversationId, 5);
+                }
 
             if (!historial || historial.length === 0) {
                 await context.sendActivity('📝 **No hay historial**\n\nAún no hay mensajes en esta conversación.');

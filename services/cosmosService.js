@@ -57,8 +57,8 @@ class CosmosService {
             console.log(`   Container: ${this.containerId}`);
             console.log(`   Partition Key: ${this.partitionKey}`);
             
-            // Test de conectividad
-            this.testConnection();
+            // Test de conectividad - deshabilitado para evitar desactivar Cosmos en fallback
+            // this.testConnection();
             
         } catch (error) {
             this.initializationError = `Error inicializando Cosmos DB: ${error.message}`;

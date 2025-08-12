@@ -970,94 +970,87 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
      */
     formatearTablaTasas(tasasData, anio, usuario) {
         try {
-            console.log(`📊 [${usuario}] Formateando datos de tasas para ${anio}`);
-            
-            if (!tasasData || !Array.isArray(tasasData) || tasasData.length === 0) {
-                return `📅 **Tasas de Interés ${anio}**\n\n❌ No se encontraron datos de tasas para este año.`;
+            if (!tasasData || !Array.isArray(tasasData)) {
+                return "❌ **Error**: Datos de tasas inválidos";
             }
 
-            let respuesta = `💰 **Tasas de Interés Nova ${anio}**\n\n`;
-            respuesta += `📊 **Datos obtenidos**: ${tasasData.length} registros\n`;
-            respuesta += `📅 **Consulta realizada**: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy HH:mm')}\n\n`;
+            let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n\n`;
+            tabla += `👤 **Usuario**: ${usuario}  📅 **Año**: ${anio}  🕐 **Actualizado**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
 
-            // Organizar datos por mes
-            const mesesData = {};
-            tasasData.forEach(item => {
-                const mes = item.Mes || item.mes || 'Desconocido';
-                if (!mesesData[mes]) {
-                    mesesData[mes] = {};
+            tabla += `📊 **DETALLE POR MES:**\n\n`;
+            
+            tasasData.forEach((mes, index) => {
+                if (mes.Mes) {
+                    tabla += `🗓️ **${mes.Mes.toUpperCase()}**\n`;
+                    tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+                    
+                    const vista = mes.vista !== undefined ? `${mes.vista}%` : 'N/A';
+                    tabla += `💳 **Cuenta Vista (Ahorros):** ${vista}\n`;
+                    
+                    tabla += `📈 **Depósitos a Plazo Fijo:**\n`;
+                    const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : 'N/A';
+                    const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : 'N/A';
+                    const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : 'N/A';
+                    tabla += `   🔸 1 mes: ${fijo1}    🔸 3 meses: ${fijo3}    🔸 6 meses: ${fijo6}\n`;
+                    
+                    const fap = mes.FAP !== undefined ? `${mes.FAP}%` : 'N/A';
+                    const nov = mes.Nov !== undefined ? `${mes.Nov}%` : 'N/A';
+                    const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : 'N/A';
+                    
+                    tabla += `🏦 **FAP (Fondo Ahorro):** ${fap}    🔄 **Novación:** ${nov}\n`;
+                    tabla += `💸 **Préstamos:** ${prestamos}\n`;
+                    
+                    if (index < tasasData.length - 1) {
+                        tabla += `\n`;
+                    }
+                }
+            });
+
+            tabla += `\n\n💡 **ANÁLISIS Y RECOMENDACIONES**\n`;
+            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+            const tasasConDatos = tasasData.filter(mes => 
+                mes.vista !== undefined || mes.fijo6 !== undefined
+            );
+            
+            if (tasasConDatos.length > 0) {
+                const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
+                
+                tabla += `⭐ **MEJORES OPCIONES ACTUALES (${ultimasTasas.Mes || 'Último mes'}):**\n\n`;
+                
+                const tasasAhorro = [
+                    { tipo: 'Depósito 6 meses', tasa: ultimasTasas.fijo6, emoji: '🏆' },
+                    { tipo: 'FAP Empleados', tasa: ultimasTasas.FAP, emoji: '💼' },
+                    { tipo: 'Depósito 3 meses', tasa: ultimasTasas.fijo3, emoji: '📊' },
+                    { tipo: 'Cuenta Vista', tasa: ultimasTasas.vista, emoji: '💳' }
+                ].filter(item => item.tasa !== undefined)
+                 .sort((a, b) => b.tasa - a.tasa);
+
+                if (tasasAhorro.length > 0) {
+                    tabla += `${tasasAhorro[0].emoji} **MEJOR PARA AHORRAR:** ${tasasAhorro[0].tipo} - **${tasasAhorro[0].tasa}%**\n`;
+                    
+                    if (tasasAhorro.length > 1) {
+                        tabla += `${tasasAhorro[1].emoji} **SEGUNDA OPCIÓN:** ${tasasAhorro[1].tipo} - **${tasasAhorro[1].tasa}%**\n`;
+                    }
                 }
                 
-                // Mapear diferentes nombres de campos
-                Object.keys(item).forEach(key => {
-                    const keyLower = key.toLowerCase();
-                    if (keyLower.includes('vista')) mesesData[mes].vista = item[key];
-                    if (keyLower.includes('fijo1') || keyLower.includes('1mes')) mesesData[mes].fijo1 = item[key];
-                    if (keyLower.includes('fijo3') || keyLower.includes('3mes')) mesesData[mes].fijo3 = item[key];
-                    if (keyLower.includes('fijo6') || keyLower.includes('6mes')) mesesData[mes].fijo6 = item[key];
-                    if (keyLower.includes('fap')) mesesData[mes].fap = item[key];
-                    if (keyLower.includes('nov')) mesesData[mes].nov = item[key];
-                    if (keyLower.includes('prestamo')) mesesData[mes].prestamo = item[key];
-                });
-            });
-
-            // Crear tabla formateada
-            respuesta += `**📈 Tasas por Mes:**\n\n`;
-            
-            const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-                          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-            meses.forEach(mes => {
-                if (mesesData[mes] || mesesData[mes.toLowerCase()]) {
-                    const data = mesesData[mes] || mesesData[mes.toLowerCase()];
-                    respuesta += `**${mes}:**\n`;
-                    if (data.vista !== undefined) respuesta += `   • Vista: ${data.vista}%\n`;
-                    if (data.fijo1 !== undefined) respuesta += `   • Fijo 1 mes: ${data.fijo1}%\n`;
-                    if (data.fijo3 !== undefined) respuesta += `   • Fijo 3 meses: ${data.fijo3}%\n`;
-                    if (data.fijo6 !== undefined) respuesta += `   • Fijo 6 meses: ${data.fijo6}%\n`;
-                    if (data.fap !== undefined) respuesta += `   • FAP: ${data.fap}%\n`;
-                    if (data.nov !== undefined) respuesta += `   • Nov: ${data.nov}%\n`;
-                    if (data.prestamo !== undefined) respuesta += `   • Préstamos: ${data.prestamo}%\n`;
-                    respuesta += `\n`;
+                if (ultimasTasas.Prestamos) {
+                    tabla += `💸 **PRÉSTAMOS:** ${ultimasTasas.Prestamos}% - `;
+                    if (ultimasTasas.Prestamos < 13) {
+                        tabla += `✅ Tasa competitiva\n`;
+                    } else {
+                        tabla += `⚠️ Considera comparar opciones\n`;
+                    }
                 }
-            });
-
-            // Calcular promedios
-            const allValues = Object.values(mesesData).reduce((acc, month) => {
-                Object.keys(month).forEach(type => {
-                    if (!acc[type]) acc[type] = [];
-                    if (month[type] !== undefined && month[type] !== null) {
-                        acc[type].push(parseFloat(month[type]));
-                    }
-                });
-                return acc;
-            }, {});
-
-            if (Object.keys(allValues).length > 0) {
-                respuesta += `**📊 Promedios Anuales:**\n`;
-                Object.entries(allValues).forEach(([type, values]) => {
-                    if (values.length > 0) {
-                        const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
-                        const typeLabel = type === 'vista' ? 'Vista' :
-                                        type === 'fijo1' ? 'Fijo 1 mes' :
-                                        type === 'fijo3' ? 'Fijo 3 meses' :
-                                        type === 'fijo6' ? 'Fijo 6 meses' :
-                                        type === 'fap' ? 'FAP' :
-                                        type === 'nov' ? 'Nov' :
-                                        type === 'prestamo' ? 'Préstamos' : type;
-                        respuesta += `   • ${typeLabel}: ${avg}%\n`;
-                    }
-                });
             }
 
-            respuesta += `\n💡 **Nota**: Tasas expresadas en porcentaje anual.`;
+            tabla += `\n💬 **¿Necesitas asesoría personalizada?** Pregúntame sobre cualquier producto específico.`;
 
-            console.log(`✅ [${usuario}] Tabla de tasas formateada exitosamente`);
-            return respuesta;
+            return tabla;
 
         } catch (error) {
-            console.error(`❌ [${usuario}] Error formateando tasas:`, error);
-            return `❌ Error formateando datos de tasas: ${error.message}`;
+            console.error('❌ Error formateando tabla de tasas:', error);
+            return `❌ **Error formateando tasas**: ${error.message}`;
         }
     }
 

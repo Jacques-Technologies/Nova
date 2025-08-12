@@ -969,90 +969,81 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
      * ✅ Formatea tabla de tasas de interés
      */
     formatearTablaTasas(tasasData, anio, usuario) {
-        try {
-            if (!tasasData || !Array.isArray(tasasData)) {
-                return "❌ **Error**: Datos de tasas inválidos";
-            }
-
-            let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n\n`;
-            tabla += `👤 **Usuario**: ${usuario}  📅 **Año**: ${anio}  🕐 **Actualizado**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
-
-            tabla += `📊 **DETALLE POR MES:**\n\n`;
-            
-            tasasData.forEach((mes, index) => {
-                if (mes.Mes) {
-                    tabla += `🗓️ **${mes.Mes.toUpperCase()}**\n`;
-                    tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-                    
-                    const vista = mes.vista !== undefined ? `${mes.vista}%` : 'N/A';
-                    tabla += `💳 **Cuenta Vista (Ahorros):** ${vista}\n`;
-                    
-                    tabla += `📈 **Depósitos a Plazo Fijo:**\n`;
-                    const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : 'N/A';
-                    const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : 'N/A';
-                    const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : 'N/A';
-                    tabla += `   🔸 1 mes: ${fijo1}    🔸 3 meses: ${fijo3}    🔸 6 meses: ${fijo6}\n`;
-                    
-                    const fap = mes.FAP !== undefined ? `${mes.FAP}%` : 'N/A';
-                    const nov = mes.Nov !== undefined ? `${mes.Nov}%` : 'N/A';
-                    const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : 'N/A';
-                    
-                    tabla += `🏦 **FAP (Fondo Ahorro):** ${fap}    🔄 **Novación:** ${nov}\n`;
-                    tabla += `💸 **Préstamos:** ${prestamos}\n`;
-                    
-                    if (index < tasasData.length - 1) {
-                        tabla += `\n`;
-                    }
-                }
-            });
-
-            tabla += `\n\n💡 **ANÁLISIS Y RECOMENDACIONES**\n`;
-            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-
-            const tasasConDatos = tasasData.filter(mes => 
-                mes.vista !== undefined || mes.fijo6 !== undefined
-            );
-            
-            if (tasasConDatos.length > 0) {
-                const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
-                
-                tabla += `⭐ **MEJORES OPCIONES ACTUALES (${ultimasTasas.Mes || 'Último mes'}):**\n\n`;
-                
-                const tasasAhorro = [
-                    { tipo: 'Depósito 6 meses', tasa: ultimasTasas.fijo6, emoji: '🏆' },
-                    { tipo: 'FAP Empleados', tasa: ultimasTasas.FAP, emoji: '💼' },
-                    { tipo: 'Depósito 3 meses', tasa: ultimasTasas.fijo3, emoji: '📊' },
-                    { tipo: 'Cuenta Vista', tasa: ultimasTasas.vista, emoji: '💳' }
-                ].filter(item => item.tasa !== undefined)
-                 .sort((a, b) => b.tasa - a.tasa);
-
-                if (tasasAhorro.length > 0) {
-                    tabla += `${tasasAhorro[0].emoji} **MEJOR PARA AHORRAR:** ${tasasAhorro[0].tipo} - **${tasasAhorro[0].tasa}%**\n`;
-                    
-                    if (tasasAhorro.length > 1) {
-                        tabla += `${tasasAhorro[1].emoji} **SEGUNDA OPCIÓN:** ${tasasAhorro[1].tipo} - **${tasasAhorro[1].tasa}%**\n`;
-                    }
-                }
-                
-                if (ultimasTasas.Prestamos) {
-                    tabla += `💸 **PRÉSTAMOS:** ${ultimasTasas.Prestamos}% - `;
-                    if (ultimasTasas.Prestamos < 13) {
-                        tabla += `✅ Tasa competitiva\n`;
-                    } else {
-                        tabla += `⚠️ Considera comparar opciones\n`;
-                    }
-                }
-            }
-
-            tabla += `\n💬 **¿Necesitas asesoría personalizada?** Pregúntame sobre cualquier producto específico.`;
-
-            return tabla;
-
-        } catch (error) {
-            console.error('❌ Error formateando tabla de tasas:', error);
-            return `❌ **Error formateando tasas**: ${error.message}`;
+    try {
+        if (!tasasData || !Array.isArray(tasasData) || tasasData.length === 0) {
+            return "❌ **Error**: Datos de tasas inválidos o vacíos";
         }
+
+        const hoyMX = new Date().toLocaleDateString('es-MX');
+
+        // Normaliza texto y ordena meses Ene..Dic (tolera acentos/casos)
+        const norm = (s) => (s ?? '').toString().toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        const monthIdx = {
+            'enero':1,'febrero':2,'marzo':3,'abril':4,'mayo':5,'junio':6,
+            'julio':7,'agosto':8,'septiembre':9,'setiembre':9,'octubre':10,'noviembre':11,'diciembre':12
+        };
+
+        const pct = (v) => {
+            if (v === undefined || v === null || v === '') return '—';
+            const n = Number(v);
+            return Number.isFinite(n) ? `${n}%` : String(v);
+        };
+
+        // Ordenar por mes
+        const filas = [...tasasData].sort((a, b) => {
+            const ai = monthIdx[norm(a.Mes)] ?? 99;
+            const bi = monthIdx[norm(b.Mes)] ?? 99;
+            return ai - bi;
+        }).map(m => ({
+            Mes: (m.Mes || '').toString(),
+            Vista: pct(m.vista),
+            Fijo1m: pct(m.fijo1),
+            Fijo3m: pct(m.fijo3),
+            Fijo6m: pct(m.fijo6),
+            FAP: pct(m.FAP),
+            Nov: pct(m.Nov),
+            Prestamos: pct(m.Prestamos)
+        }));
+
+        // Calcular anchos de columnas para tabla monoespaciada
+        const headers = ['Mes','Vista','Fijo 1m','Fijo 3m','Fijo 6m','FAP','Nov','Préstamos'];
+        const allRows = [headers, ...filas.map(f => [
+            f.Mes, f.Vista, f.Fijo1m, f.Fijo3m, f.Fijo6m, f.FAP, f.Nov, f.Prestamos
+        ])];
+
+        const widths = headers.map((_, col) =>
+            Math.max(...allRows.map(r => (r[col] ?? '').toString().length))
+        );
+
+        const pad = (txt, i) => (txt ?? '').toString().padEnd(widths[i], ' ');
+        const sep = ' | ';
+
+        const headerLine = headers.map((h, i) => pad(h, i)).join(sep);
+        const divider = widths.map(w => ''.padEnd(w, '─')).join('─┼─');
+
+        const bodyLines = filas.map(r =>
+            [r.Mes, r.Vista, r.Fijo1m, r.Fijo3m, r.Fijo6m, r.FAP, r.Nov, r.Prestamos]
+            .map((c, i) => pad(c, i)).join(sep)
+        );
+
+        let out = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n\n`;
+        out += `👤 **Usuario**: ${usuario}   📅 **Año**: ${anio}   🕐 **Actualizado**: ${hoyMX}\n\n`;
+        out += `📊 **Detalle mes por mes**\n`;
+        out += '```text\n';
+        out += headerLine + '\n';
+        out += divider + '\n';
+        out += bodyLines.join('\n') + '\n';
+        out += '```\n';
+        out += `\nLeyenda: **—** sin dato.\n`;
+
+        return out;
+
+    } catch (error) {
+        console.error('❌ Error formateando tabla de tasas:', error);
+        return `❌ **Error formateando tasas**: ${error.message}`;
     }
+}
 
     /**
      * ✅ Consulta API Nova genérica

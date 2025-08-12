@@ -753,7 +753,6 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             
             resumen += `\n💡 **Para ver el historial completo**:\n`;
             resumen += `• Escribe \`historial\` - Ver últimos 5 mensajes\n`;
-            resumen += `• Escribe \`conversacion openai\` - Ver formato OpenAI\n`;
             resumen += `• El resumen detallado se genera automáticamente por TeamsBot\n`;
 
             return resumen;

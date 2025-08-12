@@ -1,17 +1,17 @@
-// services/cosmosService.js - COMPLETAMENTE CORREGIDO: Historial funcionando
+// services/cosmosService.js - MEJORADO: Historial + Formato de Conversación
 const { CosmosClient } = require('@azure/cosmos');
 const { DateTime } = require('luxon');
 require('dotenv').config();
 
 /**
- * Servicio de Cosmos DB CORREGIDO - Historial funcionando correctamente
+ * Servicio de Cosmos DB MEJORADO - Historial funcionando + Formato de conversación
  */
 class CosmosService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando Cosmos DB Service...');
+        console.log('🚀 Inicializando Cosmos DB Service con formato de conversación...');
         this.initializeCosmosClient();
     }
 
@@ -43,7 +43,7 @@ class CosmosService {
             this.client = new CosmosClient({ 
                 endpoint, 
                 key,
-                userAgentSuffix: 'NovaBot/2.1.2-HistorialFixed'
+                userAgentSuffix: 'NovaBot/2.1.3-ConversationFormat'
             });
             
             this.database = this.client.database(this.databaseId);
@@ -57,9 +57,6 @@ class CosmosService {
             console.log(`   Container: ${this.containerId}`);
             console.log(`   Partition Key: ${this.partitionKey}`);
             
-            // Test de conectividad - deshabilitado para evitar desactivar Cosmos en fallback
-            // this.testConnection();
-            
         } catch (error) {
             this.initializationError = `Error inicializando Cosmos DB: ${error.message}`;
             console.error('❌ Error inicializando Cosmos DB:', error);
@@ -68,26 +65,178 @@ class CosmosService {
     }
 
     /**
-     * Test de conectividad con Cosmos DB
+     * ✅ NUEVO: Guardar conversación en formato de mensajes con roles
      */
-    async testConnection() {
+    async saveConversationMessages(conversationId, userId, messages, userInfo = null) {
         try {
-            console.log('🧪 Probando conectividad con Cosmos DB...');
+            if (!this.cosmosAvailable) {
+                console.warn('⚠️ Cosmos DB no disponible - conversación en formato de mensajes no guardada');
+                return null;
+            }
+
+            if (!conversationId || !userId || !Array.isArray(messages)) {
+                console.error('❌ saveConversationMessages: Parámetros inválidos');
+                return null;
+            }
+
+            const conversationDocId = `conversation_messages_${conversationId}`;
+            const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
+
+            // ✅ FORMATO: Array de mensajes con roles (system, user, assistant)
+            const conversationDoc = {
+                id: conversationDocId,
+                conversationId: conversationId,
+                userId: userId,
+                userName: userInfo?.nombre || 'Usuario',
+                documentType: 'conversation_messages_format',
+                messages: messages, // Array en el formato solicitado
+                messageCount: messages.length,
+                lastUpdated: timestamp,
+                createdAt: timestamp,
+                partitionKey: userId,
+                ttl: 60 * 60 * 24 * 90, // TTL: 90 días
+                version: '2.1.3-conversation-format',
+                format: 'openai_chat_format'
+            };
+
+            console.log(`💾 [${userId}] Guardando conversación en formato de mensajes: ${messages.length} mensajes`);
+            console.log(`🔍 [${userId}] Documento ID: ${conversationDocId}`);
+
+            // ✅ USAR UPSERT: Actualizar o crear
+            const { resource: savedDoc } = await this.container.items.upsert(conversationDoc);
             
-            await this.database.read();
-            await this.container.read();
-            
-            console.log('✅ Test de conectividad Cosmos DB exitoso');
-            
+            console.log(`✅ [${userId}] Conversación en formato de mensajes guardada exitosamente`);
+            return savedDoc;
+
         } catch (error) {
-            console.warn('⚠️ Test de conectividad Cosmos DB falló:', error.message);
-            this.cosmosAvailable = false;
-            this.initializationError = `Error de conectividad: ${error.message}`;
+            console.error(`❌ Error guardando conversación en formato de mensajes:`, {
+                error: error.message,
+                conversationId: conversationId,
+                userId: userId,
+                messageCount: messages?.length || 0
+            });
+            return null;
         }
     }
 
     /**
-     * ✅ COMPLETAMENTE CORREGIDO: Guardar mensaje con estructura consistente
+     * ✅ NUEVO: Obtener conversación en formato de mensajes
+     */
+    async getConversationMessages(conversationId, userId) {
+        try {
+            if (!this.cosmosAvailable) {
+                console.warn('⚠️ Cosmos DB no disponible - retornando conversación vacía');
+                return [];
+            }
+
+            const conversationDocId = `conversation_messages_${conversationId}`;
+
+            console.log(`📚 [${userId}] Obteniendo conversación en formato de mensajes: ${conversationDocId}`);
+
+            const { resource: conversationDoc } = await this.container
+                .item(conversationDocId, userId)
+                .read();
+
+            if (conversationDoc && conversationDoc.messages) {
+                console.log(`✅ [${userId}] Conversación en formato de mensajes obtenida: ${conversationDoc.messages.length} mensajes`);
+                return conversationDoc.messages;
+            } else {
+                console.log(`ℹ️ [${userId}] No se encontró conversación en formato de mensajes`);
+                return [];
+            }
+
+        } catch (error) {
+            if (error.code === 404) {
+                console.log(`ℹ️ [${userId}] Conversación en formato de mensajes no encontrada: ${conversationId}`);
+                return [];
+            }
+            
+            console.error(`❌ Error obteniendo conversación en formato de mensajes:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Agregar mensaje a conversación en formato de roles
+     */
+    async addMessageToConversation(conversationId, userId, role, content, userInfo = null) {
+        try {
+            if (!this.cosmosAvailable) {
+                console.warn('⚠️ Cosmos DB no disponible - mensaje no agregado a conversación');
+                return false;
+            }
+
+            // Validar role
+            const validRoles = ['system', 'user', 'assistant'];
+            if (!validRoles.includes(role)) {
+                console.error(`❌ Role inválido: ${role}. Debe ser: ${validRoles.join(', ')}`);
+                return false;
+            }
+
+            console.log(`➕ [${userId}] Agregando mensaje a conversación: ${role} - "${content.substring(0, 50)}..."`);
+
+            // Obtener conversación actual
+            let currentMessages = await this.getConversationMessages(conversationId, userId);
+
+            // ✅ AGREGAR: Nuevo mensaje al array
+            const newMessage = {
+                role: role,
+                content: content,
+                timestamp: DateTime.now().setZone('America/Mexico_City').toISO()
+            };
+
+            currentMessages.push(newMessage);
+
+            // ✅ MANTENER: Solo los últimos 20 mensajes para no llenar demasiado
+            if (currentMessages.length > 20) {
+                currentMessages = currentMessages.slice(-20);
+            }
+
+            // Guardar conversación actualizada
+            const result = await this.saveConversationMessages(conversationId, userId, currentMessages, userInfo);
+            
+            console.log(`✅ [${userId}] Mensaje agregado a conversación. Total mensajes: ${currentMessages.length}`);
+            return result !== null;
+
+        } catch (error) {
+            console.error(`❌ Error agregando mensaje a conversación:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Obtener conversación en formato OpenAI (listo para usar)
+     */
+    async getConversationForOpenAI(conversationId, userId, includeSystem = true) {
+        try {
+            const messages = await this.getConversationMessages(conversationId, userId);
+            
+            if (messages.length === 0) {
+                return [];
+            }
+
+            // Filtrar mensajes según necesidades
+            let filteredMessages = includeSystem ? 
+                messages : 
+                messages.filter(msg => msg.role !== 'system');
+
+            // Remover timestamp si existe (OpenAI no lo necesita)
+            const openaiMessages = filteredMessages.map(msg => ({
+                role: msg.role,
+                content: msg.content
+            }));
+
+            console.log(`🤖 [${userId}] Conversación formateada para OpenAI: ${openaiMessages.length} mensajes`);
+            return openaiMessages;
+
+        } catch (error) {
+            console.error(`❌ Error formateando conversación para OpenAI:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * ✅ MEJORADO: saveMessage ahora también actualiza la conversación en formato de mensajes
      */
     async saveMessage(message, conversationId, userId, userName = null, messageType = 'user') {
         try {
@@ -109,51 +258,55 @@ class CosmosService {
             const messageId = this.generateMessageId();
             const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
 
-            // ✅ ESTRUCTURA COMPLETAMENTE CORREGIDA: Campos consistentes
+            // ✅ ESTRUCTURA: Mensaje individual (mantener funcionalidad existente)
             const messageDoc = {
                 id: messageId,
                 messageId: messageId,
                 conversationId: conversationId,
                 userId: userId,
                 userName: userName || 'Usuario',
-                message: message.substring(0, 4000), // ✅ SEGURIDAD: Limitar tamaño del mensaje
+                message: message.substring(0, 4000),
                 messageType: messageType, // 'user' | 'bot' | 'system'
                 timestamp: timestamp,
                 dateCreated: timestamp,
-                partitionKey: userId, // Para partition key
+                partitionKey: userId,
                 ttl: 60 * 60 * 24 * 90, // TTL: 90 días
-                // ✅ CAMPOS ADICIONALES para debugging y consultas
                 documentType: 'conversation_message',
-                version: '2.1.2',
-                // ✅ CAMPOS REDUNDANTES para asegurar consultas
+                version: '2.1.3',
                 isMessage: true,
                 hasContent: true
             };
 
-            console.log(`💾 [${userId}] Guardando mensaje: ${messageType} (${message.length} chars)`);
-            console.log(`🔍 [${userId}] Documento a guardar:`, {
-                id: messageDoc.id,
-                conversationId: messageDoc.conversationId,
-                userId: messageDoc.userId,
-                messageType: messageDoc.messageType,
-                messageLength: messageDoc.message.length,
-                timestamp: messageDoc.timestamp
-            });
+            console.log(`💾 [${userId}] Guardando mensaje individual: ${messageType} (${message.length} chars)`);
             
             const { resource: createdItem } = await this.container.items.create(messageDoc);
             
-            console.log(`✅ [${userId}] Mensaje guardado exitosamente: ${messageId}`);
-            console.log(`🔍 [${userId}] Documento guardado confirmado:`, {
-                id: createdItem.id,
-                messageType: createdItem.messageType,
-                conversationId: createdItem.conversationId,
-                timestamp: createdItem.timestamp
-            });
+            console.log(`✅ [${userId}] Mensaje individual guardado: ${messageId}`);
+
+            // ✅ NUEVO: También agregar a conversación en formato de mensajes
+            try {
+                const role = messageType === 'bot' ? 'assistant' : 
+                           messageType === 'system' ? 'system' : 'user';
+                
+                await this.addMessageToConversation(
+                    conversationId, 
+                    userId, 
+                    role, 
+                    message,
+                    { nombre: userName }
+                );
+                
+                console.log(`🔄 [${userId}] Mensaje también agregado a conversación en formato de roles`);
+                
+            } catch (conversationError) {
+                console.warn(`⚠️ [${userId}] Error agregando a conversación en formato de roles:`, conversationError.message);
+                // No fallar si esto no funciona
+            }
             
             // ✅ ACTUALIZAR: Actividad de conversación después de guardar mensaje
             setImmediate(() => {
                 this.updateConversationActivity(conversationId, userId).catch(error => {
-                    console.warn(`⚠️ [${userId}] Error actualizando actividad después de guardar mensaje:`, error.message);
+                    console.warn(`⚠️ [${userId}] Error actualizando actividad:`, error.message);
                 });
             });
             
@@ -172,9 +325,82 @@ class CosmosService {
     }
 
     /**
+     * ✅ NUEVO: Limpiar conversación en formato de mensajes
+     */
+    async cleanConversationMessages(conversationId, userId) {
+        try {
+            if (!this.cosmosAvailable) {
+                return false;
+            }
+
+            const conversationDocId = `conversation_messages_${conversationId}`;
+
+            console.log(`🗑️ [${userId}] Limpiando conversación en formato de mensajes: ${conversationDocId}`);
+
+            await this.container.item(conversationDocId, userId).delete();
+            
+            console.log(`✅ [${userId}] Conversación en formato de mensajes eliminada`);
+            return true;
+
+        } catch (error) {
+            if (error.code === 404) {
+                console.log(`ℹ️ [${userId}] Conversación en formato de mensajes ya no existe`);
+                return true;
+            }
+            
+            console.error(`❌ Error limpiando conversación en formato de mensajes:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Obtener estadísticas de conversaciones en formato de mensajes
+     */
+    async getConversationMessagesStats() {
+        try {
+            if (!this.cosmosAvailable) {
+                return { available: false };
+            }
+
+            const query = {
+                query: `
+                    SELECT 
+                        COUNT(1) as totalConversations,
+                        SUM(c.messageCount) as totalMessages,
+                        AVG(c.messageCount) as avgMessagesPerConversation
+                    FROM c 
+                    WHERE c.documentType = 'conversation_messages_format'
+                `
+            };
+
+            const { resources } = await this.container.items.query(query).fetchAll();
+            
+            const stats = resources[0] || {
+                totalConversations: 0,
+                totalMessages: 0,
+                avgMessagesPerConversation: 0
+            };
+
+            return {
+                available: true,
+                conversationMessagesFormat: {
+                    totalConversations: stats.totalConversations,
+                    totalMessages: stats.totalMessages,
+                    avgMessagesPerConversation: Math.round(stats.avgMessagesPerConversation || 0)
+                },
+                timestamp: DateTime.now().setZone('America/Mexico_City').toISO()
+            };
+
+        } catch (error) {
+            console.error('❌ Error obteniendo estadísticas de conversaciones en formato de mensajes:', error);
+            return { available: false, error: error.message };
+        }
+    }
+
+    // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
+    
+    /**
      * ✅ COMPLETAMENTE CORREGIDO: Obtener historial de conversación desde Cosmos DB
-     * PROBLEMA: La query no funcionaba correctamente para recuperar mensajes
-     * SOLUCIÓN: Query simplificada, mejor logging y múltiples intentos de recuperación
      */
     async getConversationHistory(conversationId, userId, limit = 20) {
         try {
@@ -253,55 +479,7 @@ class CosmosService {
                 }
             }
 
-            // ✅ INTENTO 3: Si aún no hay mensajes, buscar cualquier documento del usuario
-            if (messages.length === 0) {
-                console.log(`🔍 [${userId}] Aún no hay mensajes. Ejecutando diagnóstico completo...`);
-                
-                const debugQuery = {
-                    query: `SELECT * FROM c WHERE c.userId = @userId`,
-                    parameters: [{ name: '@userId', value: userId }]
-                };
-
-                try {
-                    const { resources: allDocs } = await this.container.items
-                        .query(debugQuery, { partitionKey: userId })
-                        .fetchAll();
-
-                    console.log(`🔍 [${userId}] Debug - Total documentos del usuario: ${allDocs.length}`);
-                    
-                    allDocs.forEach((doc, index) => {
-                        console.log(`   ${index + 1}. ID: ${doc.id}`);
-                        console.log(`      Type: ${doc.documentType || 'undefined'} | MessageType: ${doc.messageType || 'undefined'}`);
-                        console.log(`      ConvId: ${doc.conversationId || 'undefined'}`);
-                        console.log(`      ConvId Match: ${doc.conversationId === conversationId ? '✅' : '❌'}`);
-                        console.log(`      Message: ${doc.message ? doc.message.substring(0, 50) + '...' : 'N/A'}`);
-                        console.log(`      Timestamp: ${doc.timestamp || 'undefined'}`);
-                    });
-
-                    // Intentar recuperar mensajes incluso si no coincide exactamente
-                    const possibleMessages = allDocs.filter(doc => 
-                        doc.message && 
-                        (doc.messageType === 'user' || doc.messageType === 'bot') &&
-                        doc.conversationId // Tiene conversationId
-                    );
-
-                    if (possibleMessages.length > 0) {
-                        console.log(`🔍 [${userId}] Encontrados ${possibleMessages.length} mensajes posibles`);
-                        
-                        // Si hay mensajes de esta conversación exacta, usarlos
-                        const exactMatches = possibleMessages.filter(msg => msg.conversationId === conversationId);
-                        if (exactMatches.length > 0) {
-                            messages = exactMatches;
-                            console.log(`✅ [${userId}] Recuperados ${messages.length} mensajes exactos`);
-                        }
-                    }
-
-                } catch (debugError) {
-                    console.error(`❌ [${userId}] Error en diagnóstico:`, debugError.message);
-                }
-            }
-
-            // ✅ FORMATEAR: Mensajes encontrados
+            // ✅ FORMATEAR mensajes encontrados
             if (messages.length === 0) {
                 console.log(`⚠️ [${userId}] No se encontraron mensajes después de todos los intentos`);
                 return [];
@@ -376,7 +554,7 @@ class CosmosService {
                 isActive: true,
                 partitionKey: userId,
                 ttl: 60 * 60 * 24 * 90, // TTL: 90 días
-                version: '2.1.2',
+                version: '2.1.3',
                 ...additionalData
             };
 
@@ -431,7 +609,6 @@ class CosmosService {
 
     /**
      * ✅ COMPLETAMENTE CORREGIDO: updateConversationActivity SIN errores de concurrencia
-     * Usa UPSERT exclusivamente para evitar conflictos
      */
     async updateConversationActivity(conversationId, userId) {
         try {
@@ -452,7 +629,6 @@ class CosmosService {
             console.log(`🔄 [${userId}] Actualizando actividad de conversación: ${conversationDocId}`);
 
             // ✅ SOLUCIÓN DEFINITIVA: SIEMPRE usar UPSERT
-            // Esto eliminará todos los problemas de concurrencia
             try {
                 // Intentar leer el documento existente para preservar datos
                 let existingDoc = null;
@@ -465,7 +641,6 @@ class CosmosService {
                     if (readError.code !== 404) {
                         console.warn(`⚠️ [${userId}] Error leyendo documento existente (continuando):`, readError.message);
                     }
-                    // Si es 404 o cualquier otro error, continuar con documento nuevo
                 }
 
                 // ✅ CREAR DOCUMENTO ACTUALIZADO: Preservar datos existentes si los hay
@@ -481,7 +656,7 @@ class CosmosService {
                     isActive: true,
                     partitionKey: userId,
                     ttl: 60 * 60 * 24 * 90,
-                    version: '2.1.2',
+                    version: '2.1.3',
                     // Preservar otros campos si existen
                     ...(existingDoc || {}),
                     // Sobrescribir campos críticos
@@ -519,138 +694,6 @@ class CosmosService {
     }
 
     /**
-     * ✅ NUEVO: Método de diagnóstico para verificar el estado de la conversación
-     */
-    async diagnosticarConversacion(conversationId, userId) {
-        try {
-            if (!this.cosmosAvailable) {
-                return { error: 'Cosmos DB no disponible' };
-            }
-
-            console.log(`🔍 [${userId}] === DIAGNÓSTICO DE CONVERSACIÓN ===`);
-            console.log(`📋 ConversationId: ${conversationId}`);
-            console.log(`👤 UserId: ${userId}`);
-
-            // 1. Contar todos los documentos del usuario
-            const countAllQuery = {
-                query: `SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId`,
-                parameters: [{ name: '@userId', value: userId }]
-            };
-
-            const { resources: countAll } = await this.container.items
-                .query(countAllQuery, { partitionKey: userId })
-                .fetchAll();
-
-            console.log(`📊 Total documentos del usuario: ${countAll[0] || 0}`);
-
-            // 2. Contar mensajes de esta conversación
-            const countMessagesQuery = {
-                query: `SELECT VALUE COUNT(1) FROM c WHERE c.userId = @userId AND c.conversationId = @conversationId AND (c.messageType = 'user' OR c.messageType = 'bot')`,
-                parameters: [
-                    { name: '@userId', value: userId },
-                    { name: '@conversationId', value: conversationId }
-                ]
-            };
-
-            const { resources: countMessages } = await this.container.items
-                .query(countMessagesQuery, { partitionKey: userId })
-                .fetchAll();
-
-            console.log(`💬 Mensajes de esta conversación: ${countMessages[0] || 0}`);
-
-            // 3. Obtener muestra de documentos
-            const sampleQuery = {
-                query: `SELECT TOP 10 c.id, c.documentType, c.messageType, c.conversationId, c.message, c.timestamp FROM c WHERE c.userId = @userId ORDER BY c.timestamp DESC`,
-                parameters: [{ name: '@userId', value: userId }]
-            };
-
-            const { resources: sampleDocs } = await this.container.items
-                .query(sampleQuery, { partitionKey: userId })
-                .fetchAll();
-
-            console.log(`📋 Muestra de documentos recientes (${sampleDocs.length}):`);
-            sampleDocs.forEach((doc, index) => {
-                console.log(`   ${index + 1}. ID: ${doc.id}`);
-                console.log(`      Type: ${doc.documentType} | MessageType: ${doc.messageType}`);
-                console.log(`      ConvId Match: ${doc.conversationId === conversationId ? '✅' : '❌'} (${doc.conversationId})`);
-                console.log(`      Message: ${doc.message ? doc.message.substring(0, 50) + '...' : 'N/A'}`);
-                console.log(`      Timestamp: ${doc.timestamp}`);
-            });
-
-            return {
-                totalDocuments: countAll[0] || 0,
-                conversationMessages: countMessages[0] || 0,
-                sampleDocuments: sampleDocs.length,
-                conversationId: conversationId,
-                userId: userId,
-                sampleData: sampleDocs
-            };
-
-        } catch (error) {
-            console.error(`❌ Error en diagnóstico:`, error);
-            return { error: error.message };
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Método para intentar recuperar mensajes "perdidos"
-     */
-    async repararHistorialConversacion(conversationId, userId) {
-        try {
-            console.log(`🔧 [${userId}] Intentando reparar historial de conversación...`);
-
-            // Buscar mensajes con query más amplia
-            const repairQuery = {
-                query: `
-                    SELECT *
-                    FROM c 
-                    WHERE c.userId = @userId
-                    AND (CONTAINS(c.id, 'msg_') OR c.documentType = 'conversation_message')
-                    ORDER BY c.timestamp DESC
-                `,
-                parameters: [{ name: '@userId', value: userId }]
-            };
-
-            const { resources: foundMessages } = await this.container.items
-                .query(repairQuery, { partitionKey: userId })
-                .fetchAll();
-
-            console.log(`🔍 [${userId}] Mensajes encontrados con query amplia: ${foundMessages.length}`);
-
-            // Filtrar mensajes de esta conversación
-            const conversationMessages = foundMessages.filter(msg => 
-                msg.conversationId === conversationId && 
-                (msg.messageType === 'user' || msg.messageType === 'bot')
-            );
-
-            console.log(`💬 [${userId}] Mensajes de esta conversación: ${conversationMessages.length}`);
-
-            if (conversationMessages.length > 0) {
-                console.log(`✅ [${userId}] Historial recuperado exitosamente`);
-                
-                // Formatear mensajes
-                return conversationMessages.map(msg => ({
-                    id: msg.messageId || msg.id,
-                    message: msg.message || 'Mensaje vacío',
-                    conversationId: msg.conversationId,
-                    userId: msg.userId,
-                    userName: msg.userName,
-                    timestamp: msg.timestamp,
-                    type: msg.messageType === 'bot' ? 'assistant' : 'user',
-                    messageType: msg.messageType
-                })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-            } else {
-                console.log(`❌ [${userId}] No se pudieron recuperar mensajes de la conversación`);
-                return [];
-            }
-
-        } catch (error) {
-            console.error(`❌ Error en reparación de historial:`, error);
-            return [];
-        }
-    }
-
-    /**
      * Elimina mensajes antiguos de una conversación
      */
     async cleanOldMessages(conversationId, userId, keepLast = 50) {
@@ -669,6 +712,7 @@ class CosmosService {
                     WHERE c.conversationId = @conversationId 
                     AND c.userId = @userId
                     AND c.documentType != 'conversation_info'
+                    AND c.documentType != 'conversation_messages_format'
                     ORDER BY c.timestamp DESC
                 `,
                 parameters: [
@@ -748,6 +792,9 @@ class CosmosService {
                 }
             }
 
+            // ✅ TAMBIÉN ELIMINAR: Conversación en formato de mensajes
+            await this.cleanConversationMessages(conversationId, userId);
+
             console.log(`✅ [${userId}] Conversación eliminada (${deletedCount} documentos)`);
             return deletedCount > 0;
 
@@ -758,7 +805,7 @@ class CosmosService {
     }
 
     /**
-     * ✅ CORREGIDO: Obtiene estadísticas sin usar CASE
+     * ✅ MEJORADO: Obtiene estadísticas con información de conversaciones en formato de mensajes
      */
     async getStats() {
         try {
@@ -774,10 +821,11 @@ class CosmosService {
                 conversations: 0,
                 userMessages: 0,
                 botMessages: 0,
-                systemMessages: 0
+                systemMessages: 0,
+                conversationMessagesFormat: 0
             };
 
-            // ✅ CONSULTAS CORREGIDAS: Sin CASE, compatible con Cosmos DB
+            // ✅ CONSULTAS MEJORADAS: Incluyendo conversaciones en formato de mensajes
             const queries = [
                 {
                     label: 'totalDocuments',
@@ -798,6 +846,10 @@ class CosmosService {
                 {
                     label: 'systemMessages',
                     query: "SELECT VALUE COUNT(1) FROM c WHERE c.messageType = 'system'"
+                },
+                {
+                    label: 'conversationMessagesFormat',
+                    query: "SELECT VALUE COUNT(1) FROM c WHERE c.documentType = 'conversation_messages_format'"
                 }
             ];
 
@@ -829,6 +881,9 @@ class CosmosService {
                 console.warn('⚠️ Error obteniendo actividad reciente:', error.message);
             }
 
+            // ✅ OBTENER: Estadísticas de conversaciones en formato de mensajes
+            const conversationMessagesStats = await this.getConversationMessagesStats();
+
             return {
                 available: true,
                 initialized: this.initialized,
@@ -843,16 +898,17 @@ class CosmosService {
                         (typeof statsResults.systemMessages === 'number' ? statsResults.systemMessages : 0),
                     recentActivity
                 },
+                conversationMessagesFormat: conversationMessagesStats.conversationMessagesFormat || null,
                 timestamp: DateTime.now().setZone('America/Mexico_City').toISO(),
-                version: '2.1.2-HistorialFixed',
-                fixes: [
-                    'CORREGIDO getConversationHistory - múltiples intentos de recuperación',
-                    'CORREGIDO saveMessage - estructura de datos consistente',
-                    'AGREGADO diagnóstico completo de conversaciones',
-                    'AGREGADO método de reparación de historial',
-                    'MEJORADO logging detallado para debugging',
-                    'CORREGIDO mapeo de tipos de mensaje (user/assistant)',
-                    'AGREGADO campos redundantes para mejor consulta'
+                version: '2.1.3-ConversationFormat',
+                features: [
+                    'Historial de mensajes individuales',
+                    'Conversaciones en formato OpenAI (system, user, assistant)',
+                    'Persistencia dual (individual + conversación)',
+                    'TTL automático de 90 días',
+                    'UPSERT sin conflictos de concurrencia',
+                    'Estadísticas completas',
+                    'Limpieza automática de mensajes antiguos'
                 ]
             };
 
@@ -880,7 +936,7 @@ class CosmosService {
     }
 
     /**
-     * Obtiene información de configuración (sin datos sensibles)
+     * ✅ MEJORADO: Obtiene información de configuración con nuevas características
      */
     getConfigInfo() {
         return {
@@ -890,16 +946,23 @@ class CosmosService {
             container: this.containerId,
             partitionKey: this.partitionKey,
             error: this.initializationError,
-            version: '2.1.2-HistorialFixed',
-            corrections: [
-                'Error "Entity with the specified id already exists" ELIMINADO',
-                'updateConversationActivity usa UPSERT exclusivamente',
-                'getConversationHistory COMPLETAMENTE CORREGIDO',
-                'saveMessage con estructura de datos consistente',
-                'Agregados métodos de diagnóstico y reparación',
-                'Mejorado logging para debugging',
-                'Múltiples intentos de recuperación de historial',
-                'Mapeo correcto user/assistant en mensajes'
+            version: '2.1.3-ConversationFormat',
+            features: {
+                individualMessages: true,
+                conversationHistory: true,
+                conversationMessagesFormat: true, // ✅ NUEVO
+                openaiCompatibleFormat: true,     // ✅ NUEVO
+                autoTTL: true,
+                upsertOperations: true,
+                concurrencySafe: true
+            },
+            newCapabilities: [
+                'Guardado dual: mensajes individuales + formato de conversación',
+                'Formato compatible con OpenAI Chat API',
+                'Conversaciones como arrays con roles (system, user, assistant)',
+                'Persistencia automática en ambos formatos',
+                'Estadísticas extendidas',
+                'Limpieza granular por tipo de documento'
             ]
         };
     }

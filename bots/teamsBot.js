@@ -1,4 +1,4 @@
-// teamsBot.js - CORREGIDO: Sistema de historial funcionando
+// bots/teamsBot.js - CÓDIGO COMPLETO con nuevo formato de persistencia
 const { DialogBot } = require('./dialogBot');
 const { CardFactory } = require('botbuilder');
 const axios = require('axios');
@@ -17,19 +17,95 @@ class TeamsBot extends DialogBot {
         this.loginCardSentUsers = new Set();
         this.welcomeMessageSent = new Set();
         
-        // ✅ NUEVO: Cache simple para historial local (backup)
-        this.mensajeCache = new Map(); // conversationId -> [mensajes]
+        // ✅ NUEVO: Cache para historial con formato role/content (máximo 5 de cada tipo)
+        this.conversationCache = new Map(); // conversationId -> { userMessages: [], botMessages: [] }
         
         this.onMembersAdded(this.handleMembersAdded.bind(this));
         this.onMessage(this.handleMessageWithAuth.bind(this));
         this.openaiService = openaiService;
         
-        console.log('✅ TeamsBot inicializado con sistema de historial CORREGIDO');
+        console.log('✅ TeamsBot inicializado con formato role/content (5+5 mensajes)');
         console.log(`💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB activa' : 'Solo memoria'}`);
     }
 
     /**
-     * ✅ COMPLETAMENTE CORREGIDO: Guardar mensaje en historial
+     * ✅ NUEVO: Agregar mensaje al cache con límite de 5 por tipo
+     */
+    agregarMensajeACache(conversationId, role, content, userId, userName = 'Usuario') {
+        try {
+            if (!this.conversationCache.has(conversationId)) {
+                this.conversationCache.set(conversationId, {
+                    userMessages: [],
+                    botMessages: []
+                });
+            }
+
+            const cache = this.conversationCache.get(conversationId);
+            const timestamp = new Date().toISOString();
+
+            const mensajeObj = {
+                role: role, // 'user' o 'assistant'
+                content: content,
+                timestamp: timestamp,
+                userId: userId,
+                userName: userName
+            };
+
+            // ✅ AGREGAR a la lista correspondiente
+            if (role === 'user') {
+                cache.userMessages.unshift(mensajeObj); // Agregar al inicio
+                // Mantener solo los últimos 5 mensajes del usuario
+                if (cache.userMessages.length > 5) {
+                    cache.userMessages = cache.userMessages.slice(0, 5);
+                }
+            } else if (role === 'assistant') {
+                cache.botMessages.unshift(mensajeObj); // Agregar al inicio
+                // Mantener solo los últimos 5 mensajes del bot
+                if (cache.botMessages.length > 5) {
+                    cache.botMessages = cache.botMessages.slice(0, 5);
+                }
+            }
+
+            console.log(`📝 [${userId}] Cache actualizado: ${cache.userMessages.length} user, ${cache.botMessages.length} assistant`);
+            
+        } catch (error) {
+            console.error('❌ Error agregando mensaje a cache:', error);
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Obtener conversación en formato role/content ordenado cronológicamente
+     */
+    obtenerConversacionFormateada(conversationId) {
+        try {
+            if (!this.conversationCache.has(conversationId)) {
+                return [];
+            }
+
+            const cache = this.conversationCache.get(conversationId);
+            
+            // Combinar mensajes de usuario y bot
+            const todosMensajes = [
+                ...cache.userMessages.map(msg => ({ ...msg, tipo: 'user' })),
+                ...cache.botMessages.map(msg => ({ ...msg, tipo: 'bot' }))
+            ];
+
+            // Ordenar por timestamp (más reciente primero)
+            const mensajesOrdenados = todosMensajes.sort((a, b) => 
+                new Date(b.timestamp) - new Date(a.timestamp)
+            );
+
+            // Tomar máximo 10 mensajes (5 + 5)
+            return mensajesOrdenados.slice(0, 10);
+
+        } catch (error) {
+            console.error('❌ Error obteniendo conversación formateada:', error);
+            return [];
+        }
+    }
+
+    /**
+     * ✅ MEJORADO: Guardar mensaje en todos los sistemas
      */
     async guardarMensajeEnHistorial(mensaje, tipo, conversationId, userId, userName = 'Usuario') {
         try {
@@ -38,23 +114,14 @@ class TeamsBot extends DialogBot {
                 return false;
             }
 
-            const timestamp = new Date().toISOString();
-            const mensajeObj = {
-                id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                mensaje: mensaje,
-                tipo: tipo, // 'user' o 'bot'
-                conversationId: conversationId,
-                userId: userId,
-                userName: userName,
-                timestamp: timestamp
-            };
+            const role = tipo === 'bot' ? 'assistant' : 'user';
+            
+            console.log(`💾 [${userId}] Guardando mensaje ${role}: "${mensaje.substring(0, 50)}..."`);
 
-            console.log(`💾 [${userId}] Guardando mensaje ${tipo}: "${mensaje.substring(0, 50)}..."`);
+            // ✅ 1. AGREGAR al cache con límite de 5+5
+            this.agregarMensajeACache(conversationId, role, mensaje, userId, userName);
 
-            // ✅ 1. SIEMPRE guardar en cache local PRIMERO
-            this.agregarACacheLocal(conversationId, mensajeObj);
-
-            // ✅ 2. Intentar guardar en Cosmos DB si está disponible
+            // ✅ 2. Guardar en Cosmos DB si está disponible (formato individual - mantener compatibilidad)
             if (cosmosService.isAvailable()) {
                 try {
                     await cosmosService.saveMessage(
@@ -64,17 +131,30 @@ class TeamsBot extends DialogBot {
                         userName,
                         tipo
                     );
-                    console.log(`✅ [${userId}] Mensaje guardado en Cosmos DB`);
+                    console.log(`✅ [${userId}] Mensaje guardado en Cosmos DB (formato individual)`);
                 } catch (cosmosError) {
                     console.warn(`⚠️ [${userId}] Error guardando en Cosmos DB:`, cosmosError.message);
-                    // No falla si Cosmos DB falla, tenemos el cache local
+                }
+
+                // ✅ 3. También guardar en formato de conversación OpenAI
+                try {
+                    await cosmosService.addMessageToConversation(
+                        conversationId,
+                        userId,
+                        role,
+                        mensaje,
+                        { nombre: userName }
+                    );
+                    console.log(`🤖 [${userId}] Mensaje guardado en formato OpenAI`);
+                } catch (openaiError) {
+                    console.warn(`⚠️ [${userId}] Error guardando en formato OpenAI:`, openaiError.message);
                 }
             }
 
-            // ✅ 3. También guardar en conversationService como backup
+            // ✅ 4. Backup en conversationService
             await conversationService.saveMessage(mensaje, conversationId, tipo === 'bot' ? 'bot' : userId);
 
-            console.log(`✅ [${userId}] Mensaje guardado exitosamente en todos los sistemas`);
+            console.log(`✅ [${userId}] Mensaje guardado en todos los sistemas disponibles`);
             return true;
 
         } catch (error) {
@@ -84,164 +164,59 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ NUEVO: Agregar mensaje al cache local manteniendo solo 5
-     */
-    agregarACacheLocal(conversationId, mensajeObj) {
-        try {
-            let mensajes = this.mensajeCache.get(conversationId) || [];
-            
-            // Agregar nuevo mensaje al inicio
-            mensajes.unshift(mensajeObj);
-            
-            // Mantener solo los últimos 5 mensajes
-            if (mensajes.length > 5) {
-                mensajes = mensajes.slice(0, 5);
-            }
-            
-            this.mensajeCache.set(conversationId, mensajes);
-            
-            console.log(`📋 Cache local: ${mensajes.length} mensajes para conversación ${conversationId.substr(-8)}`);
-            
-        } catch (error) {
-            console.error('❌ Error agregando a cache local:', error);
-        }
-    }
-
-    /**
-     * ✅ COMPLETAMENTE CORREGIDO: Obtener historial de conversación
-     */
-    async obtenerHistorialConversacion(conversationId, userId, limite = 5) {
-        try {
-            console.log(`📚 [${userId}] === OBTENIENDO HISTORIAL ===`);
-            console.log(`🔍 ConversationId: ${conversationId}`);
-            console.log(`👤 UserId: ${userId}`);
-
-            let historial = [];
-
-            // ✅ ESTRATEGIA 1: Intentar cache local primero (más rápido)
-            const cacheLocal = this.mensajeCache.get(conversationId) || [];
-            if (cacheLocal.length > 0) {
-                historial = cacheLocal.slice(0, limite);
-                console.log(`📋 [${userId}] Historial desde cache local: ${historial.length} mensajes`);
-            }
-
-            // ✅ ESTRATEGIA 2: Si no hay cache, intentar Cosmos DB
-            if (historial.length === 0 && cosmosService.isAvailable()) {
-                try {
-                    console.log(`💾 [${userId}] Buscando en Cosmos DB...`);
-                    const cosmosHistorial = await cosmosService.getConversationHistory(conversationId, userId, limite);
-                    
-                    if (cosmosHistorial && cosmosHistorial.length > 0) {
-                        historial = cosmosHistorial.map(msg => ({
-                            id: msg.id,
-                            mensaje: msg.message,
-                            tipo: msg.messageType === 'bot' ? 'bot' : 'user',
-                            conversationId: msg.conversationId,
-                            userId: msg.userId,
-                            userName: msg.userName,
-                            timestamp: msg.timestamp
-                        }));
-                        
-                        // Actualizar cache local con datos de Cosmos DB
-                        this.mensajeCache.set(conversationId, historial);
-                        
-                        console.log(`💾 [${userId}] Historial desde Cosmos DB: ${historial.length} mensajes`);
-                    }
-                } catch (cosmosError) {
-                    console.warn(`⚠️ [${userId}] Error obteniendo de Cosmos DB:`, cosmosError.message);
-                }
-            }
-
-            // ✅ ESTRATEGIA 3: Backup con conversationService
-            if (historial.length === 0) {
-                try {
-                    console.log(`🔄 [${userId}] Usando conversationService como backup...`);
-                    const backupHistorial = await conversationService.getConversationHistory(conversationId, limite);
-                    
-                    if (backupHistorial && backupHistorial.length > 0) {
-                        historial = backupHistorial.map(msg => ({
-                            id: msg.id,
-                            mensaje: msg.message,
-                            tipo: msg.userId === 'bot' ? 'bot' : 'user',
-                            conversationId: msg.conversationId,
-                            userId: msg.userId,
-                            userName: 'Usuario',
-                            timestamp: msg.timestamp
-                        }));
-                        
-                        console.log(`🔄 [${userId}] Historial desde conversationService: ${historial.length} mensajes`);
-                    }
-                } catch (backupError) {
-                    console.warn(`⚠️ [${userId}] Error con conversationService:`, backupError.message);
-                }
-            }
-
-            // ✅ FORMATEAR resultado final
-            const historialFinal = historial
-                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)) // Más reciente primero
-                .slice(0, limite);
-
-            console.log(`✅ [${userId}] === HISTORIAL OBTENIDO: ${historialFinal.length} mensajes ===`);
-            
-            if (historialFinal.length > 0) {
-                console.log(`📋 [${userId}] Mensajes obtenidos:`);
-                historialFinal.forEach((msg, index) => {
-                    const fecha = new Date(msg.timestamp).toLocaleString('es-MX');
-                    console.log(`   ${index + 1}. ${msg.tipo.toUpperCase()} (${fecha}): ${msg.mensaje.substring(0, 50)}...`);
-                });
-            } else {
-                console.log(`ℹ️ [${userId}] No se encontraron mensajes en ningún sistema`);
-            }
-
-            return historialFinal;
-
-        } catch (error) {
-            console.error(`❌ [${userId}] Error obteniendo historial:`, error);
-            return [];
-        }
-    }
-
-    /**
-     * ✅ CORREGIDO: Mostrar historial de conversación
+     * ✅ NUEVO: Mostrar historial en formato role/content
      */
     async showConversationHistory(context, userId, conversationId) {
         try {
-            console.log(`📚 [${userId}] Mostrando historial de conversación`);
+            console.log(`📚 [${userId}] Mostrando historial en formato role/content`);
             
-            const historial = await this.obtenerHistorialConversacion(conversationId, userId, 5);
+            const conversacion = this.obtenerConversacionFormateada(conversationId);
             
-            if (!historial || historial.length === 0) {
+            if (!conversacion || conversacion.length === 0) {
                 await context.sendActivity(
-                    `📝 **Historial de Conversación**\n\n` +
+                    `📚 **Historial de Conversación**\n\n` +
                     `❌ **No hay mensajes guardados**\n\n` +
                     `Esto puede ocurrir si:\n` +
                     `• Es una conversación nueva\n` +
-                    `• El bot se reinició recientemente\n` +
-                    `• Hay problemas con la persistencia\n\n` +
+                    `• El bot se reinició recientemente\n\n` +
                     `💡 **Envía algunos mensajes** y luego vuelve a consultar el historial.`
                 );
                 return;
             }
 
-            let respuesta = `📚 **Historial de Conversación (${historial.length}/5)**\n\n`;
+            // ✅ CONTAR mensajes por tipo
+            const userCount = conversacion.filter(msg => msg.role === 'user').length;
+            const assistantCount = conversacion.filter(msg => msg.role === 'assistant').length;
+
+            let respuesta = `📚 **Historial de Conversación (${conversacion.length}/10 mensajes)**\n\n`;
+            respuesta += `👤 **Mensajes del usuario**: ${userCount}/5\n`;
+            respuesta += `🤖 **Mensajes del asistente**: ${assistantCount}/5\n`;
             respuesta += `💾 **Persistencia**: ${cosmosService.isAvailable() ? 'Cosmos DB activo' : 'Solo memoria'}\n\n`;
 
-            historial.forEach((msg, index) => {
+            respuesta += `**Conversación en formato role/content:**\n\n`;
+
+            // ✅ MOSTRAR conversación en orden cronológico inverso (más reciente primero)
+            conversacion.forEach((msg, index) => {
                 const fecha = new Date(msg.timestamp).toLocaleString('es-MX');
-                const emoji = msg.tipo === 'bot' ? '🤖' : '👤';
-                const autor = msg.tipo === 'bot' ? 'Nova Bot' : (msg.userName || 'Usuario');
+                const emoji = msg.role === 'user' ? '👤' : '🤖';
+                const roleLabel = msg.role === 'user' ? 'user' : 'assistant';
                 
-                respuesta += `${emoji} **${autor}** (${fecha})\n`;
-                respuesta += `${msg.mensaje}\n`;
+                respuesta += `**${index + 1}. ${emoji} Role: "${roleLabel}"**\n`;
+                respuesta += `📅 ${fecha}\n`;
+                respuesta += `💬 Content: "${msg.content}"\n`;
                 
-                if (index < historial.length - 1) {
+                if (index < conversacion.length - 1) {
                     respuesta += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
                 }
             });
 
             respuesta += `\n\n💡 **Comandos útiles:**\n`;
-            respuesta += `• \`resumen\` - Resumen de la conversación\n`;
-            respuesta += `• \`limpiar historial\` - Eliminar mensajes`;
+            respuesta += `• \`resumen\` - Resumen inteligente de la conversación\n`;
+            respuesta += `• \`conversacion openai\` - Ver formato OpenAI completo\n`;
+            respuesta += `• \`limpiar historial\` - Eliminar mensajes\n\n`;
+            
+            respuesta += `📋 **Formato**: Máximo 5 mensajes de usuario + 5 del asistente\n`;
+            respuesta += `🔄 **Rotación**: Al llegar al límite, se eliminan los mensajes más antiguos`;
 
             await context.sendActivity(respuesta);
 
@@ -252,15 +227,15 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ CORREGIDO: Mostrar resumen de conversación
+     * ✅ MEJORADO: Mostrar resumen con estadísticas del nuevo formato
      */
     async showConversationSummary(context, userId, conversationId) {
         try {
             console.log(`📊 [${userId}] Generando resumen de conversación`);
             
-            const historial = await this.obtenerHistorialConversacion(conversationId, userId, 5);
+            const conversacion = this.obtenerConversacionFormateada(conversationId);
             
-            if (!historial || historial.length === 0) {
+            if (!conversacion || conversacion.length === 0) {
                 await context.sendActivity(
                     `📊 **Resumen de Conversación**\n\n` +
                     `❌ **No hay mensajes para resumir**\n\n` +
@@ -271,36 +246,36 @@ class TeamsBot extends DialogBot {
 
             const userInfo = await this.getUserInfo(userId);
             
-            // ✅ Estadísticas básicas
-            const mensajesUsuario = historial.filter(msg => msg.tipo === 'user').length;
-            const mensajesBot = historial.filter(msg => msg.tipo === 'bot').length;
-            const primerMensaje = historial[historial.length - 1];
-            const ultimoMensaje = historial[0];
+            // ✅ ESTADÍSTICAS del nuevo formato
+            const userMessages = conversacion.filter(msg => msg.role === 'user');
+            const assistantMessages = conversacion.filter(msg => msg.role === 'assistant');
+            const primerMensaje = conversacion[conversacion.length - 1]; // Más antiguo
+            const ultimoMensaje = conversacion[0]; // Más reciente
 
             let resumen = `📊 **Resumen de Conversación**\n\n`;
             resumen += `👤 **Usuario**: ${userInfo?.nombre || 'Usuario'} (${userId})\n`;
-            resumen += `💬 **Total mensajes**: ${historial.length}\n`;
-            resumen += `📤 **Tus mensajes**: ${mensajesUsuario}\n`;
-            resumen += `🤖 **Respuestas del bot**: ${mensajesBot}\n`;
+            resumen += `💬 **Total mensajes**: ${conversacion.length}/10\n`;
+            resumen += `📤 **Mensajes del usuario**: ${userMessages.length}/5\n`;
+            resumen += `🤖 **Respuestas del asistente**: ${assistantMessages.length}/5\n`;
             resumen += `📅 **Primer mensaje**: ${new Date(primerMensaje.timestamp).toLocaleString('es-MX')}\n`;
             resumen += `🕐 **Último mensaje**: ${new Date(ultimoMensaje.timestamp).toLocaleString('es-MX')}\n`;
             resumen += `💾 **Persistencia**: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Solo memoria'}\n\n`;
 
-            // ✅ Resumen automático con IA si está disponible
-            if (this.openaiService && this.openaiService.openaiAvailable && historial.length >= 2) {
+            // ✅ RESUMEN automático con IA si está disponible
+            if (this.openaiService && this.openaiService.openaiAvailable && conversacion.length >= 2) {
                 try {
                     resumen += `🧠 **Resumen Inteligente**:\n`;
                     
-                    // Preparar contexto para IA
-                    const mensajesParaIA = historial.reverse().map(msg => 
-                        `${msg.tipo === 'bot' ? 'Bot' : 'Usuario'}: ${msg.mensaje}`
+                    // ✅ USAR formato role/content directamente para IA
+                    const mensajesParaIA = conversacion.reverse().map(msg => 
+                        `${msg.role === 'user' ? 'Usuario' : 'Asistente'}: ${msg.content}`
                     ).join('\n');
 
-                    const prompt = `Genera un resumen muy breve (máximo 3 líneas) de esta conversación:\n\n${mensajesParaIA}`;
+                    const prompt = `Genera un resumen profesional y conciso (máximo 3 líneas) de esta conversación corporativa:\n\n${mensajesParaIA}`;
                     
                     const respuestaIA = await this.openaiService.procesarMensaje(
                         prompt,
-                        [],
+                        [], // Sin historial adicional
                         userInfo?.token,
                         userInfo
                     );
@@ -314,12 +289,13 @@ class TeamsBot extends DialogBot {
                 }
             }
 
+            // ✅ MOSTRAR últimos mensajes en formato compacto
             resumen += `📋 **Últimos mensajes**:\n`;
-            historial.slice(0, 3).forEach((msg, index) => {
-                const emoji = msg.tipo === 'bot' ? '🤖' : '👤';
-                const preview = msg.mensaje.length > 80 ? 
-                    msg.mensaje.substring(0, 80) + '...' : 
-                    msg.mensaje;
+            conversacion.slice(0, 3).forEach((msg, index) => {
+                const emoji = msg.role === 'user' ? '👤' : '🤖';
+                const preview = msg.content.length > 80 ? 
+                    msg.content.substring(0, 80) + '...' : 
+                    msg.content;
                 resumen += `${index + 1}. ${emoji} ${preview}\n`;
             });
 
@@ -334,27 +310,33 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ NUEVO: Limpiar historial
+     * ✅ NUEVO: Limpiar historial con formato role/content
      */
     async limpiarHistorial(context, userId, conversationId) {
         try {
-            console.log(`🧹 [${userId}] Limpiando historial de conversación`);
+            console.log(`🧹 [${userId}] Limpiando historial formato role/content`);
 
-            let limpiados = 0;
+            let mensajesEliminados = 0;
 
-            // Limpiar cache local
-            if (this.mensajeCache.has(conversationId)) {
-                const mensajesCache = this.mensajeCache.get(conversationId).length;
-                this.mensajeCache.delete(conversationId);
-                limpiados += mensajesCache;
-                console.log(`🧹 [${userId}] Cache local limpiado: ${mensajesCache} mensajes`);
+            // ✅ 1. Limpiar cache local
+            if (this.conversationCache.has(conversationId)) {
+                const cache = this.conversationCache.get(conversationId);
+                const totalMensajes = cache.userMessages.length + cache.botMessages.length;
+                
+                this.conversationCache.set(conversationId, {
+                    userMessages: [],
+                    botMessages: []
+                });
+                
+                mensajesEliminados += totalMensajes;
+                console.log(`🧹 [${userId}] Cache local limpiado: ${totalMensajes} mensajes`);
             }
 
-            // Limpiar Cosmos DB
+            // ✅ 2. Limpiar Cosmos DB
             if (cosmosService.isAvailable()) {
                 try {
                     const eliminadosCosmosDB = await cosmosService.cleanOldMessages(conversationId, userId, 0);
-                    limpiados += eliminadosCosmosDB;
+                    mensajesEliminados += eliminadosCosmosDB;
                     console.log(`🧹 [${userId}] Cosmos DB limpiado: ${eliminadosCosmosDB} mensajes`);
                 } catch (cosmosError) {
                     console.warn(`⚠️ [${userId}] Error limpiando Cosmos DB:`, cosmosError.message);
@@ -363,8 +345,9 @@ class TeamsBot extends DialogBot {
 
             await context.sendActivity(
                 `🧹 **Historial Limpiado**\n\n` +
-                `✅ **Mensajes eliminados**: ${limpiados}\n` +
-                `💾 **Estado**: Conversación reiniciada\n\n` +
+                `✅ **Mensajes eliminados**: ${mensajesEliminados}\n` +
+                `💾 **Estado**: Conversación reiniciada\n` +
+                `📋 **Formato**: Cache role/content reiniciado (0/5 user, 0/5 assistant)\n\n` +
                 `Los nuevos mensajes comenzarán a guardarse automáticamente.`
             );
 
@@ -375,13 +358,13 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ CORREGIDO: Procesar mensaje con guardado automático
+     * ✅ MEJORADO: Procesar mensaje con guardado en formato role/content
      */
     async processAuthenticatedMessage(context, text, userId, conversationId) {
         try {
             const userInfo = this.authenticatedUsers.get(userId);
             
-            // ✅ 1. GUARDAR MENSAJE DEL USUARIO INMEDIATAMENTE
+            // ✅ 1. GUARDAR MENSAJE DEL USUARIO
             await this.guardarMensajeEnHistorial(
                 text,
                 'user',
@@ -395,28 +378,30 @@ class TeamsBot extends DialogBot {
 
             console.log(`💬 [${userInfo.usuario}] Procesando mensaje autenticado: "${text}"`);
 
-            // ✅ 2. OBTENER HISTORIAL PARA CONTEXTO
-            const historial = await this.obtenerHistorialConversacion(conversationId, userId, 5);
+            // ✅ 2. OBTENER HISTORIAL para contexto (desde cache local)
+            const conversacionFormateada = this.obtenerConversacionFormateada(conversationId);
             
-            // Formatear historial para OpenAI (sin incluir el mensaje actual)
-            const historialParaIA = historial
-                .filter(msg => msg.mensaje !== text) // Excluir el mensaje actual
+            // ✅ 3. FORMATEAR para OpenAI (excluir mensaje actual)
+            const historialParaIA = conversacionFormateada
+                .filter(msg => msg.content !== text) // Excluir mensaje actual
                 .reverse() // Orden cronológico
                 .map(msg => ({
-                    role: msg.tipo === 'bot' ? 'assistant' : 'user',
-                    content: msg.mensaje
+                    role: msg.role, // 'user' o 'assistant'
+                    content: msg.content
                 }));
 
-            // ✅ 3. PROCESAR CON IA
+            console.log(`🧠 [${userInfo.usuario}] Contexto para IA: ${historialParaIA.length} mensajes`);
+
+            // ✅ 4. PROCESAR CON IA
             const response = await this.openaiService.procesarMensaje(
                 text, 
-                historialParaIA, // Pasar historial formateado
+                historialParaIA,
                 userInfo.token, 
                 userInfo,
                 conversationId
             );
 
-            // ✅ 4. GUARDAR RESPUESTA DEL BOT
+            // ✅ 5. GUARDAR RESPUESTA DEL BOT
             if (response && response.content) {
                 await this.guardarMensajeEnHistorial(
                     response.content,
@@ -427,7 +412,7 @@ class TeamsBot extends DialogBot {
                 );
             }
 
-            // ✅ 5. ENVIAR RESPUESTA
+            // ✅ 6. ENVIAR RESPUESTA
             await this.sendResponse(context, response);
 
         } catch (error) {
@@ -446,7 +431,7 @@ class TeamsBot extends DialogBot {
     }
 
     /**
-     * ✅ CORREGIDO: Manejar mensajes con comandos de historial
+     * ✅ MEJORADO: Manejar mensajes con comandos
      */
     async handleMessageWithAuth(context, next) {
         const userId = context.activity.from.id;
@@ -455,7 +440,7 @@ class TeamsBot extends DialogBot {
         console.log(`[${userId}] Mensaje recibido: "${text}"`);
 
         try {
-            // 🧪 COMANDOS DE DIAGNÓSTICO (mantener para desarrollo)
+            // 🧪 COMANDOS DE DIAGNÓSTICO
             if (text.toLowerCase() === 'test-card' || text.toLowerCase() === 'test') {
                 await this.runCardTests(context);
                 return await next();
@@ -517,7 +502,7 @@ class TeamsBot extends DialogBot {
             console.log(`✅ [${userId}] Usuario autenticado - procesando mensaje`);
             const conversationId = context.activity.conversation.id;
 
-            // ✅ COMANDOS DE HISTORIAL (CORREGIDOS)
+            // ✅ COMANDOS DE HISTORIAL (NUEVO FORMATO)
             const lowerText = text.toLowerCase();
             
             if (lowerText === 'historial' || lowerText.includes('historial')) {
@@ -528,13 +513,24 @@ class TeamsBot extends DialogBot {
                 }
                 return await next();
             }
+
+            // ✅ COMANDOS DE CONVERSACIÓN OpenAI
+            if (lowerText === 'conversacion openai' || lowerText === 'formato openai') {
+                await this.showConversationFormatOpenAI(context, userId, conversationId);
+                return await next();
+            }
+
+            if (lowerText === 'limpiar conversacion' || lowerText === 'limpiar formato openai') {
+                await this.limpiarConversacionFormatoOpenAI(context, userId, conversationId);
+                return await next();
+            }
             
             if (lowerText === 'resumen' || lowerText.includes('resumen')) {
                 await this.showConversationSummary(context, userId, conversationId);
                 return await next();
             }
 
-            // ✅ OTROS COMANDOS PARA USUARIOS AUTENTICADOS
+            // ✅ OTROS COMANDOS
             if (text.toLowerCase() === 'mi info' || text.toLowerCase() === 'info' || text.toLowerCase() === 'perfil') {
                 await this.showUserInfo(context, userId);
                 return await next();
@@ -545,17 +541,17 @@ class TeamsBot extends DialogBot {
                 return await next();
             }
 
-            // ✅ NUEVO: Inicializar conversación en Cosmos DB si es necesario
+            // ✅ INICIALIZAR conversación si es necesario
             if (cosmosService.isAvailable()) {
                 const userInfo = await this.getUserInfo(userId);
                 const conversationExists = await cosmosService.getConversationInfo(conversationId, userInfo.usuario);
                 if (!conversationExists) {
-                    console.log(`📝 [${userId}] Inicializando conversación perdida en Cosmos DB`);
+                    console.log(`📝 [${userId}] Inicializando conversación en Cosmos DB`);
                     await this.initializeConversation(context, userId);
                 }
             }
 
-            // 💬 PROCESAR MENSAJE CON IA (con historial automático)
+            // 💬 PROCESAR MENSAJE CON IA
             await this.processAuthenticatedMessage(context, text, userId, conversationId);
 
         } catch (error) {
@@ -571,30 +567,21 @@ class TeamsBot extends DialogBot {
     }
 
     // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
-    // (Todos los métodos como showLoginCard, handleLoginSubmit, etc. se mantienen igual)
-    
+
     async showLoginCard(context, caller = 'unknown') {
         const userId = context.activity.from.id;
         
         try {
             console.log(`\n🔐 [${userId}] ===== INICIO showLoginCard =====`);
             console.log(`📞 [${userId}] Llamado desde: ${caller}`);
-            console.log(`🔍 [${userId}] Usuario ya tiene tarjeta pendiente: ${this.loginCardSentUsers.has(userId)}`);
 
             if (this.loginCardSentUsers.has(userId)) {
                 console.log(`⚠️ [${userId}] Tarjeta ya enviada recientemente, saltando...`);
                 return;
             }
 
-            console.log('🔐 Intentando mostrar tarjeta de login...');
-
             const loginCard = this.createMinimalLoginCard();
-            
-            console.log('🔐 Enviando tarjeta...');
-            
-            await context.sendActivity({ 
-                attachments: [loginCard]
-            });
+            await context.sendActivity({ attachments: [loginCard] });
 
             this.loginCardSentUsers.add(userId);
             
@@ -604,11 +591,9 @@ class TeamsBot extends DialogBot {
             }, 30000);
 
             console.log(`✅ [${userId}] Tarjeta enviada exitosamente`);
-            console.log(`🏁 [${userId}] ===== FIN showLoginCard =====\n`);
 
         } catch (error) {
             console.error(`❌ [${userId}] Error enviando tarjeta de login:`, error);
-            
             this.loginCardSentUsers.delete(userId);
             
             await context.sendActivity(
@@ -663,13 +648,8 @@ class TeamsBot extends DialogBot {
             ]
         };
 
-        console.log('🔐 Tarjeta de login mínima creada');
         return CardFactory.adaptiveCard(card);
     }
-
-    // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
-    // handleTextLogin, handleLoginSubmit, authenticateWithNova, etc.
-    // (Por brevedad no los incluyo aquí, pero deben mantenerse tal como están)
 
     async handleTextLogin(context, text) {
         const userId = context.activity.from.id;
@@ -689,16 +669,12 @@ class TeamsBot extends DialogBot {
                 return;
             }
 
-            console.log(`[${userId}] Credenciales extraídas - Usuario: ${username}`);
-
             await context.sendActivity({ type: 'typing' });
             const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
 
             if (loginResponse.success) {
                 this.loginCardSentUsers.delete(userId);
-                
                 await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
-                
                 await this.initializeConversation(context, userId);
                 
                 await context.sendActivity(
@@ -706,8 +682,9 @@ class TeamsBot extends DialogBot {
                     `👋 Bienvenido, **${loginResponse.userInfo.nombre}**\n` +
                     `👤 Usuario: ${loginResponse.userInfo.usuario}\n` +
                     `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n` +
+                    `💾 **Formato**: role/content (5 user + 5 assistant)\n` +
                     `${cosmosService.isAvailable() ? 
-                        '💾 **Persistencia activada**: Conversaciones guardadas en Cosmos DB\n' : 
+                        '💾 **Persistencia**: Cosmos DB + memoria\n' : 
                         '⚠️ **Solo memoria**: Conversaciones temporales\n'}\n` +
                     `💬 Ya puedes usar el bot normalmente.`
                 );
@@ -729,54 +706,28 @@ class TeamsBot extends DialogBot {
         const userId = context.activity.from.id;
         
         try {
-            console.log(`\n🎯 [${userId}] ===== SUBMIT DE TARJETA RECIBIDO =====`);
-            console.log(`📋 Activity value:`, JSON.stringify(context.activity.value, null, 2));
+            console.log(`🎯 [${userId}] Submit de tarjeta recibido`);
 
             const value = context.activity.value || {};
             const { username, password, action } = value;
 
-            console.log(`🔍 Datos extraídos:`, {
-                username: username ? `"${username}" (${username.length} chars)` : 'undefined',
-                password: password ? `"${'*'.repeat(password.length)}" (${password.length} chars)` : 'undefined',
-                action: action
-            });
-
             if (action !== 'login') {
-                console.log(`⚠️ [${userId}] Submit ignorado - acción esperada: 'login', recibida: '${action}'`);
+                console.log(`⚠️ [${userId}] Submit ignorado - acción: '${action}'`);
                 return;
             }
 
             if (!username || !password) {
-                console.log(`❌ [${userId}] Campos incompletos - username: ${!!username}, password: ${!!password}`);
-                await context.sendActivity(
-                    '❌ **Campos incompletos**\n\n' +
-                    'Por favor, completa usuario y contraseña.'
-                );
+                await context.sendActivity('❌ **Campos incompletos**\n\nPor favor, completa usuario y contraseña.');
                 await this.showLoginCard(context, 'handleLoginSubmit-incompletos');
                 return;
             }
 
-            console.log(`🚀 [${userId}] Procesando login desde tarjeta - Usuario: "${username}"`);
-
             await context.sendActivity({ type: 'typing' });
-            
-            console.log(`📡 [${userId}] Llamando a Nova API...`);
             const loginResponse = await this.authenticateWithNova(username.trim(), password.trim());
-            
-            console.log(`📨 [${userId}] Respuesta de autenticación:`, {
-                success: loginResponse.success,
-                message: loginResponse.message,
-                hasUserInfo: !!loginResponse.userInfo
-            });
 
             if (loginResponse.success) {
-                console.log(`✅ [${userId}] Login exitoso, estableciendo autenticación...`);
-                
                 this.loginCardSentUsers.delete(userId);
-                
-                const authResult = await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
-                console.log(`🔐 [${userId}] Autenticación establecida: ${authResult}`);
-                
+                await this.setUserAuthenticated(userId, loginResponse.userInfo, context);
                 await this.initializeConversation(context, userId);
                 
                 await context.sendActivity(
@@ -784,16 +735,13 @@ class TeamsBot extends DialogBot {
                     `👋 Bienvenido, **${loginResponse.userInfo.nombre}**\n` +
                     `👤 Usuario: ${loginResponse.userInfo.usuario}\n` +
                     `🔑 Token: ${loginResponse.userInfo.token.substring(0, 20)}...\n` +
+                    `💾 **Formato**: role/content (5 user + 5 assistant)\n` +
                     `${cosmosService.isAvailable() ? 
-                        '💾 **Persistencia activada**: Conversaciones guardadas en Cosmos DB\n' : 
+                        '💾 **Persistencia**: Cosmos DB + memoria\n' : 
                         '⚠️ **Solo memoria**: Conversaciones temporales\n'}\n` +
                     `💬 Ya puedes usar el bot normalmente.`
                 );
-                
-                console.log(`🎉 [${userId}] Login completado exitosamente`);
             } else {
-                console.log(`❌ [${userId}] Login fallido: ${loginResponse.message}`);
-                
                 await context.sendActivity(
                     `❌ **Error de autenticación**\n\n` +
                     `${loginResponse.message}\n\n` +
@@ -802,10 +750,8 @@ class TeamsBot extends DialogBot {
                 await this.showLoginCard(context, 'handleLoginSubmit-fallido');
             }
 
-            console.log(`🏁 [${userId}] ===== FIN SUBMIT DE TARJETA =====\n`);
-
         } catch (error) {
-            console.error(`💥 [${userId}] Error crítico en submit de tarjeta:`, error);
+            console.error(`💥 [${userId}] Error en submit de tarjeta:`, error);
             await context.sendActivity('❌ Error procesando tarjeta de login.');
         }
     }
@@ -829,17 +775,12 @@ class TeamsBot extends DialogBot {
                 }
             );
 
-            console.log(`📡 Respuesta Nova (${response.status}):`, JSON.stringify(response.data, null, 2));
-
             let parsedData = response.data;
             
             if (typeof response.data === 'string') {
-                console.log(`🔧 Parseando JSON string...`);
                 try {
                     parsedData = JSON.parse(response.data);
-                    console.log(`✅ JSON parseado exitosamente:`, parsedData);
                 } catch (parseError) {
-                    console.error(`❌ Error parseando JSON:`, parseError.message);
                     return {
                         success: false,
                         message: 'Error procesando respuesta del servidor'
@@ -849,14 +790,6 @@ class TeamsBot extends DialogBot {
 
             if (parsedData && parsedData.info && parsedData.info.length > 0) {
                 const rawUserInfo = parsedData.info[0];
-                
-                console.log(`🔍 Datos del usuario:`, {
-                    EsValido: rawUserInfo.EsValido,
-                    HasToken: !!rawUserInfo.Token,
-                    TokenLength: rawUserInfo.Token ? rawUserInfo.Token.length : 0,
-                    Mensaje: rawUserInfo.Mensaje,
-                    CveUsuario: rawUserInfo.CveUsuario
-                });
                 
                 if (rawUserInfo.EsValido === 0 && rawUserInfo.Token && rawUserInfo.Token.trim().length > 0) {
                     const cleanUserInfo = {
@@ -868,21 +801,17 @@ class TeamsBot extends DialogBot {
                         mensaje: rawUserInfo.Mensaje ? rawUserInfo.Mensaje.trim() : 'Login exitoso'
                     };
                     
-                    console.log(`✅ Datos limpiados:`, cleanUserInfo);
-                    
                     return {
                         success: true,
                         userInfo: cleanUserInfo
                     };
                 } else {
-                    console.log(`❌ Login fallido - EsValido: ${rawUserInfo.EsValido}, Token: ${!!rawUserInfo.Token}`);
                     return {
                         success: false,
                         message: rawUserInfo.Mensaje || 'Credenciales inválidas'
                     };
                 }
             } else {
-                console.log('❌ Respuesta sin datos válidos - parsedData:', parsedData);
                 return {
                     success: false,
                     message: 'Respuesta inesperada del servidor'
@@ -893,7 +822,6 @@ class TeamsBot extends DialogBot {
             console.error('❌ Error Nova API:', error.message);
             
             if (error.response) {
-                console.error('❌ Response error:', error.response.status, error.response.data);
                 return {
                     success: false,
                     message: `Error del servidor: ${error.response.status}`
@@ -917,7 +845,8 @@ class TeamsBot extends DialogBot {
         }
     }
 
-    // ===== MANTENER TODOS LOS MÉTODOS AUXILIARES =====
+    // ===== MÉTODOS AUXILIARES =====
+
     isLogoutCommand(text) {
         return ['logout', 'cerrar sesion', 'cerrar sesión', 'salir'].includes(text.toLowerCase());
     }
@@ -1025,32 +954,6 @@ class TeamsBot extends DialogBot {
         return this.authenticatedUsers.get(userId) || null;
     }
 
-    getStats() {
-        return {
-            authenticatedUsers: this.authenticatedUsers.size,
-            loginCardsPending: this.loginCardSentUsers.size,
-            welcomeMessagesSent: this.welcomeMessageSent.size,
-            openaiAvailable: this.openaiService?.openaiAvailable || false,
-            cosmosDBAvailable: cosmosService.isAvailable(),
-            persistenceType: cosmosService.isAvailable() ? 'CosmosDB' : 'Memory',
-            mensajesEnCache: Array.from(this.mensajeCache.values()).reduce((total, msgs) => total + msgs.length, 0),
-            conversacionesActivas: this.mensajeCache.size,
-            timestamp: new Date().toISOString()
-        };
-    }
-
-    cleanup() {
-        console.log('🧹 Limpiando TeamsBot...');
-        this.authenticatedUsers.clear();
-        this.loginCardSentUsers.clear();
-        this.welcomeMessageSent.clear();
-        this.mensajeCache.clear();
-        console.log('✅ TeamsBot limpiado');
-    }
-
-    // ===== MANTENER MÉTODOS EXISTENTES (showUserInfo, showHelp, handleLogout, etc.) =====
-    // (Por brevedad no los incluyo completos aquí)
-
     async showUserInfo(context, userId) {
         try {
             const userInfo = await this.getUserInfo(userId);
@@ -1095,29 +998,33 @@ class TeamsBot extends DialogBot {
                 `🤖 **Chat Inteligente:**\n` +
                 `• Conversación natural con IA GPT-4\n` +
                 `• Respuestas contextuales y memoria de conversación\n` +
-                `• ${cosmosService.isAvailable() ? 'Historial persistente en Cosmos DB' : 'Historial temporal en memoria'}\n\n` +
+                `• Formato role/content (máximo 5 mensajes usuario + 5 asistente)\n\n` +
                 
                 `📚 **Comandos de Historial:**\n` +
-                `• \`historial\` - Ver últimos 5 mensajes\n` +
-                `• \`resumen\` - Resumen de la conversación\n` +
-                `• \`limpiar historial\` - Eliminar mensajes guardados\n\n` +
+                `• \`historial\` - Ver últimos mensajes en formato role/content\n` +
+                `• \`resumen\` - Resumen inteligente de la conversación\n` +
+                `• \`limpiar historial\` - Eliminar cache de mensajes\n\n` +
+                
+                `🤖 **Comandos OpenAI:**\n` +
+                `• \`conversacion openai\` - Ver formato OpenAI completo\n` +
+                `• \`limpiar conversacion\` - Limpiar formato OpenAI\n\n` +
                 
                 `👤 **Comandos de Usuario:**\n` +
                 `• \`mi info\` - Ver tu información completa\n` +
                 `• \`logout\` - Cerrar sesión\n` +
                 `• \`ayuda\` - Mostrar esta ayuda\n\n` +
                 
-                `🔒 **Seguridad y Persistencia:**\n` +
-                `• Tu sesión es segura con token corporativo\n` +
+                `🔒 **Persistencia Actual:**\n` +
                 `• ${cosmosService.isAvailable() ? 
-                    'Conversaciones guardadas permanentemente en Cosmos DB' : 
-                    'Conversaciones temporales (se pierden al reiniciar)'}\n` +
-                `• Acceso controlado por autenticación\n\n` +
+                    'Cosmos DB: Mensajes guardados permanentemente' : 
+                    'Solo memoria: Mensajes temporales'}\n` +
+                `• Cache local: 5 mensajes usuario + 5 asistente\n` +
+                `• Rotación automática: Se eliminan los más antiguos\n\n` +
                 
-                `💡 **Prueba el historial:**\n` +
+                `💡 **Prueba el nuevo formato:**\n` +
                 `1. Envía algunos mensajes\n` +
-                `2. Escribe \`historial\` para verlos\n` +
-                `3. Escribe \`resumen\` para un resumen inteligente`
+                `2. Escribe \`historial\` para ver formato role/content\n` +
+                `3. Escribe \`resumen\` para análisis inteligente`
             );
 
         } catch (error) {
@@ -1134,10 +1041,10 @@ class TeamsBot extends DialogBot {
             const userName = userInfo ? userInfo.nombre : 'Usuario';
             const conversationId = context.activity.conversation.id;
             
-            // Limpiar historial local
-            if (this.mensajeCache.has(conversationId)) {
-                this.mensajeCache.delete(conversationId);
-                console.log(`🗑️ [${userId}] Cache local de mensajes limpiado`);
+            // ✅ LIMPIAR cache local role/content
+            if (this.conversationCache.has(conversationId)) {
+                this.conversationCache.delete(conversationId);
+                console.log(`🗑️ [${userId}] Cache role/content limpiado`);
             }
             
             // Limpiar datos de autenticación
@@ -1154,7 +1061,7 @@ class TeamsBot extends DialogBot {
             await context.sendActivity(
                 `👋 **¡Hasta luego, ${userName}!**\n\n` +
                 `✅ Tu sesión ha sido cerrada correctamente.\n` +
-                `🗑️ Historial de conversación limpiado\n` +
+                `🗑️ Cache de conversación limpiado (role/content)\n` +
                 `🔒 Para volver a usar el bot, necesitarás autenticarte nuevamente.`
             );
             
@@ -1188,22 +1095,211 @@ class TeamsBot extends DialogBot {
                 {
                     userInfo: userInfo,
                     channelId: context.activity.channelId,
-                    serviceUrl: context.activity.serviceUrl
+                    serviceUrl: context.activity.serviceUrl,
+                    formatoRoleContent: true // ✅ MARCAR nuevo formato
                 }
             );
             
             console.log(`✅ [${userId}] Conversación inicializada en Cosmos DB`);
             
         } catch (error) {
-            console.error(`❌ Error inicializando conversación en Cosmos DB:`, error);
+            console.error(`❌ Error inicializando conversación:`, error);
         }
     }
 
-    // ===== MANTENER MÉTODOS DE DIAGNÓSTICO =====
-    async debugNovaAPI(context, text) { /* mantener igual */ }
-    async runCardTests(context) { /* mantener igual */ }
-    createSimpleTestCard() { /* mantener igual */ }
-    createInputTestCard() { /* mantener igual */ }
+    // ✅ MANTENER métodos para formato OpenAI (compatibilidad)
+    async showConversationFormatOpenAI(context, userId, conversationId) {
+        try {
+            if (!cosmosService.isAvailable()) {
+                await context.sendActivity('❌ Esta funcionalidad requiere Cosmos DB configurado.');
+                return;
+            }
+
+            const conversationMessages = await cosmosService.getConversationMessages(conversationId, userId);
+            
+            if (!conversationMessages || conversationMessages.length === 0) {
+                await context.sendActivity(
+                    `📚 **Conversación en Formato OpenAI**\n\n` +
+                    `❌ **No hay mensajes en formato OpenAI**\n\n` +
+                    `Esta funcionalidad requiere mensajes guardados en Cosmos DB.`
+                );
+                return;
+            }
+
+            let respuesta = `📚 **Conversación en Formato OpenAI (${conversationMessages.length} mensajes)**\n\n`;
+            respuesta += `💾 **Persistencia**: Cosmos DB activo\n`;
+            respuesta += `🔗 **Formato**: Compatible con OpenAI Chat API\n\n`;
+
+            respuesta += `**Estructura JSON:**\n`;
+            respuesta += `\`\`\`json\n`;
+            respuesta += JSON.stringify(conversationMessages.slice(0, 5), null, 2); // Solo mostrar algunos
+            respuesta += `\n\`\`\`\n\n`;
+
+            await context.sendActivity(respuesta);
+
+        } catch (error) {
+            console.error('❌ Error mostrando conversación OpenAI:', error);
+            await context.sendActivity('❌ Error obteniendo conversación en formato OpenAI.');
+        }
+    }
+
+    async limpiarConversacionFormatoOpenAI(context, userId, conversationId) {
+        try {
+            if (!cosmosService.isAvailable()) {
+                await context.sendActivity('❌ Esta funcionalidad requiere Cosmos DB configurado.');
+                return;
+            }
+
+            const result = await cosmosService.cleanConversationMessages(conversationId, userId);
+
+            if (result) {
+                await context.sendActivity(
+                    `🧹 **Conversación OpenAI Limpiada**\n\n` +
+                    `✅ **Estado**: Formato OpenAI eliminado\n` +
+                    `📝 **Nota**: El historial role/content se mantiene\n`
+                );
+            } else {
+                await context.sendActivity('❌ Error limpiando conversación OpenAI.');
+            }
+
+        } catch (error) {
+            console.error('❌ Error limpiando conversación OpenAI:', error);
+            await context.sendActivity('❌ Error limpiando conversación.');
+        }
+    }
+
+    getStats() {
+        const totalCacheMessages = Array.from(this.conversationCache.values())
+            .reduce((total, cache) => total + cache.userMessages.length + cache.botMessages.length, 0);
+
+        return {
+            authenticatedUsers: this.authenticatedUsers.size,
+            loginCardsPending: this.loginCardSentUsers.size,
+            welcomeMessagesSent: this.welcomeMessageSent.size,
+            openaiAvailable: this.openaiService?.openaiAvailable || false,
+            cosmosDBAvailable: cosmosService.isAvailable(),
+            persistenceType: cosmosService.isAvailable() ? 'CosmosDB+Memory-RoleContent' : 'Memory-RoleContent',
+            conversacionesActivas: this.conversationCache.size,
+            mensajesEnCache: totalCacheMessages,
+            formatoRoleContent: {
+                conversaciones: this.conversationCache.size,
+                totalMensajes: totalCacheMessages,
+                maxPorConversacion: '5 user + 5 assistant',
+                rotacionAutomatica: true
+            },
+            timestamp: new Date().toISOString(),
+            version: '2.1.3-RoleContentFormat'
+        };
+    }
+
+    cleanup() {
+        console.log('🧹 Limpiando TeamsBot...');
+        this.authenticatedUsers.clear();
+        this.loginCardSentUsers.clear();
+        this.welcomeMessageSent.clear();
+        this.conversationCache.clear(); // ✅ LIMPIAR cache role/content
+        console.log('✅ TeamsBot limpiado');
+    }
+
+    // ===== MÉTODOS DE DIAGNÓSTICO (mantener para desarrollo) =====
+    async debugNovaAPI(context, text) {
+        const userId = context.activity.from.id;
+        const parts = text.split(' ');
+        
+        if (parts.length < 3) {
+            await context.sendActivity('❌ Uso: `debug-api usuario contraseña`');
+            return;
+        }
+
+        const [, username, password] = parts;
+        
+        try {
+            await context.sendActivity({ type: 'typing' });
+            console.log(`🔧 [${userId}] Debug Nova API: ${username}`);
+            
+            const result = await this.authenticateWithNova(username, password);
+            
+            await context.sendActivity(
+                `🔧 **Debug Nova API**\n\n` +
+                `👤 **Usuario**: ${username}\n` +
+                `✅ **Resultado**: ${result.success ? 'Éxito' : 'Fallo'}\n` +
+                `📝 **Mensaje**: ${result.message || 'N/A'}\n` +
+                `${result.userInfo ? `🔑 **Token Preview**: ${result.userInfo.token.substring(0, 30)}...` : ''}`
+            );
+            
+        } catch (error) {
+            await context.sendActivity(`❌ **Error en debug**: ${error.message}`);
+        }
+    }
+
+    async runCardTests(context) {
+        const userId = context.activity.from.id;
+        
+        try {
+            console.log(`🧪 [${userId}] Ejecutando tests de tarjetas`);
+            
+            await context.sendActivity('🧪 **Test de Tarjetas Iniciado**');
+            
+            // Test 1: Tarjeta básica
+            await context.sendActivity('🧪 **Test 1**: Tarjeta básica');
+            await context.sendActivity({ attachments: [this.createSimpleTestCard()] });
+            
+            // Test 2: Tarjeta con inputs
+            await context.sendActivity('🧪 **Test 2**: Tarjeta con inputs');
+            await context.sendActivity({ attachments: [this.createInputTestCard()] });
+            
+            await context.sendActivity('✅ **Tests completados** - Si ves las tarjetas, todo funciona correctamente');
+            
+        } catch (error) {
+            console.error(`❌ [${userId}] Error en tests:`, error);
+            await context.sendActivity('❌ Error ejecutando tests de tarjetas');
+        }
+    }
+
+    createSimpleTestCard() {
+        return CardFactory.adaptiveCard({
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: 'Test Básico',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'TextBlock',
+                    text: 'Si ves esto, las tarjetas funcionan.',
+                    wrap: true
+                }
+            ]
+        });
+    }
+
+    createInputTestCard() {
+        return CardFactory.adaptiveCard({
+            type: 'AdaptiveCard',
+            version: '1.0',
+            body: [
+                {
+                    type: 'TextBlock',
+                    text: 'Test de Inputs',
+                    weight: 'Bolder'
+                },
+                {
+                    type: 'Input.Text',
+                    id: 'testInput',
+                    placeholder: 'Escribe algo'
+                }
+            ],
+            actions: [
+                {
+                    type: 'Action.Submit',
+                    title: 'Test Submit',
+                    data: { action: 'test' }
+                }
+            ]
+        });
+    }
 }
 
 module.exports.TeamsBot = TeamsBot;

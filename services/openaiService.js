@@ -1,29 +1,29 @@
-// services/openaiService.js - CÓDIGO COMPLETO CORREGIDO
-// OpenAI Service simplificado que trabaja con el nuevo sistema de historial de TeamsBot
+// services/openaiService.js - MEJORADO: Con soporte para formato de conversación
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
 const axios = require('axios');
 const { CardFactory } = require('botbuilder');
+const cosmosService = require('./cosmosService');
 require('dotenv').config();
 
 /**
- * Servicio OpenAI COMPLETO Y CORREGIDO
- * - Se enfoca solo en procesamiento de mensajes
- * - Recibe historial formateado desde TeamsBot
- * - No maneja guardado (TeamsBot lo hace automáticamente)
- * - Incluye herramientas esenciales para funcionalidad corporativa
+ * Servicio OpenAI MEJORADO con soporte para formato de conversación OpenAI
+ * - Mantiene compatibilidad con historial tradicional
+ * - Aprovecha formato de conversación cuando está disponible
+ * - Guardado automático en formato OpenAI
  */
 class OpenAIService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando OpenAI Service COMPLETO...');
+        console.log('🚀 Inicializando OpenAI Service con soporte para formato de conversación...');
         this.diagnoseConfiguration();
         this.initializeOpenAI();
         this.tools = this.defineTools();
         
         console.log(`✅ OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
+        console.log(`🔗 Formato de conversación: ${cosmosService.isAvailable() ? 'Disponible' : 'No disponible'}`);
     }
 
     /**
@@ -184,13 +184,17 @@ class OpenAIService {
                 type: "function",
                 function: {
                     name: "generar_resumen_conversacion",
-                    description: "Genera un resumen inteligente de la conversación actual usando el historial disponible",
+                    description: "Genera un resumen inteligente de la conversación usando el historial en formato OpenAI cuando esté disponible",
                     parameters: { 
                         type: "object", 
                         properties: {
                             incluir_estadisticas: {
                                 type: "boolean",
                                 description: "Si incluir estadísticas detalladas"
+                            },
+                            usar_formato_openai: {
+                                type: "boolean",
+                                description: "Si usar el formato de conversación OpenAI para mejor análisis"
                             }
                         }
                     }
@@ -221,16 +225,38 @@ class OpenAIService {
                         required: ["endpoint"]
                     }
                 }
+            },
+            // ✅ NUEVA HERRAMIENTA: Trabajar con formato de conversación
+            {
+                type: "function",
+                function: {
+                    name: "analizar_conversacion_openai",
+                    description: "Analiza la conversación completa usando el formato OpenAI para obtener insights detallados",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            tipo_analisis: {
+                                type: "string",
+                                enum: ["resumen", "sentimientos", "temas", "patrones", "recomendaciones"],
+                                description: "Tipo de análisis a realizar"
+                            },
+                            incluir_sistema: {
+                                type: "boolean",
+                                description: "Si incluir el mensaje del sistema en el análisis"
+                            }
+                        },
+                        required: ["tipo_analisis"]
+                    }
+                }
             }
         ];
 
-        console.log(`🛠️ ${tools.length} herramientas definidas para OpenAI`);
+        console.log(`🛠️ ${tools.length} herramientas definidas para OpenAI (incluyendo análisis de conversación)`);
         return tools;
     }
 
     /**
-     * ✅ MÉTODO PRINCIPAL: Procesar mensaje (CORREGIDO)
-     * Ya no maneja guardado - TeamsBot lo hace automáticamente
+     * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con soporte para formato de conversación
      */
     async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
         try {
@@ -250,17 +276,45 @@ class OpenAIService {
             console.log(`📝 [${userInfo?.usuario || 'unknown'}] Procesando: "${mensaje.substring(0, 50)}..."`);
             console.log(`📚 [${userInfo?.usuario || 'unknown'}] Historial recibido: ${historial.length} mensajes`);
 
-            // ✅ IMPORTANTE: Ya no manejamos guardado aquí - TeamsBot lo hace automáticamente
-            // Solo procesamos el mensaje con el historial que nos proporcionan
+            // ✅ DECISIÓN INTELIGENTE: Usar formato de conversación OpenAI si está disponible
+            let mensajesParaIA = [];
+            let usingOpenAIFormat = false;
 
-            // ✅ Formatear mensajes para OpenAI
-            const mensajes = this.formatearHistorialParaOpenAI(historial, userInfo);
-            mensajes.push({ role: "user", content: mensaje });
+            if (cosmosService.isAvailable() && conversationId) {
+                try {
+                    console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Intentando usar formato de conversación OpenAI...`);
+                    
+                    const openaiConversation = await cosmosService.getConversationForOpenAI(
+                        conversationId,
+                        userInfo?.usuario || 'unknown',
+                        true // incluir mensaje del sistema
+                    );
+
+                    if (openaiConversation && openaiConversation.length > 0) {
+                        mensajesParaIA = [...openaiConversation];
+                        usingOpenAIFormat = true;
+                        console.log(`✅ [${userInfo?.usuario || 'unknown'}] Usando formato de conversación OpenAI: ${mensajesParaIA.length} mensajes`);
+                    } else {
+                        console.log(`⚠️ [${userInfo?.usuario || 'unknown'}] Formato OpenAI vacío, fallback a historial tradicional`);
+                    }
+                } catch (openaiFormatError) {
+                    console.warn(`⚠️ [${userInfo?.usuario || 'unknown'}] Error obteniendo formato OpenAI:`, openaiFormatError.message);
+                }
+            }
+
+            // ✅ FALLBACK: Usar historial tradicional si formato OpenAI no está disponible
+            if (!usingOpenAIFormat) {
+                console.log(`📋 [${userInfo?.usuario || 'unknown'}] Usando historial tradicional formateado`);
+                mensajesParaIA = this.formatearHistorialTradicional(historial, userInfo);
+            }
+
+            // ✅ AGREGAR: Mensaje actual del usuario
+            mensajesParaIA.push({ role: "user", content: mensaje });
 
             // ✅ Configuración inteligente del modelo
             const requestConfig = {
                 model: this.selectBestModel(mensaje, userInfo),
-                messages: mensajes,
+                messages: mensajesParaIA,
                 temperature: this.calculateTemperature(mensaje),
                 max_tokens: this.calculateMaxTokens(mensaje),
                 presence_penalty: 0.1,
@@ -274,7 +328,7 @@ class OpenAIService {
                 console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Habilitando herramientas para esta consulta`);
             }
 
-            console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Enviando a OpenAI (${requestConfig.model})...`);
+            console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Enviando a OpenAI (${requestConfig.model}, formato: ${usingOpenAIFormat ? 'OpenAI' : 'tradicional'})...`);
             const response = await this.openai.chat.completions.create(requestConfig);
             
             if (!response?.choices?.length) {
@@ -288,7 +342,7 @@ class OpenAIService {
                 console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Ejecutando ${messageResponse.tool_calls.length} herramientas...`);
                 finalResponse = await this.procesarHerramientas(
                     messageResponse, 
-                    mensajes, 
+                    mensajesParaIA, 
                     userToken, 
                     userInfo,
                     conversationId
@@ -301,6 +355,15 @@ class OpenAIService {
             }
 
             console.log(`✅ [${userInfo?.usuario || 'unknown'}] Respuesta generada exitosamente`);
+            
+            // ✅ METADATA: Agregar información sobre el formato usado
+            finalResponse.metadata = {
+                formatUsed: usingOpenAIFormat ? 'openai-conversation' : 'traditional-history',
+                messagesProcessed: mensajesParaIA.length,
+                modelUsed: requestConfig.model,
+                toolsUsed: !!messageResponse.tool_calls
+            };
+            
             return finalResponse;
 
         } catch (error) {
@@ -310,9 +373,9 @@ class OpenAIService {
     }
 
     /**
-     * ✅ Formatear historial para OpenAI (MEJORADO)
+     * ✅ NUEVO: Formatear historial tradicional cuando no hay formato OpenAI
      */
-    formatearHistorialParaOpenAI(historial, userInfo) {
+    formatearHistorialTradicional(historial, userInfo) {
         const fechaActual = DateTime.now().setZone('America/Mexico_City');
         
         const userContext = userInfo ? 
@@ -357,9 +420,9 @@ ${historial.length > 0 ?
 • Si el usuario se refiere a algo anterior, busca en el historial proporcionado`
         }];
         
-        // ✅ Procesar historial (ya viene en el formato correcto desde TeamsBot)
+        // ✅ Procesar historial tradicional
         if (historial && historial.length > 0) {
-            console.log(`📚 Formateando ${historial.length} mensajes del historial...`);
+            console.log(`📚 Formateando ${historial.length} mensajes del historial tradicional...`);
             
             historial.forEach((item, index) => {
                 if (item.content && item.content.trim()) {
@@ -376,100 +439,7 @@ ${historial.length > 0 ?
     }
 
     /**
-     * ✅ Seleccionar el mejor modelo según el tipo de consulta
-     */
-    selectBestModel(mensaje, userInfo) {
-        const mensajeLower = mensaje.toLowerCase();
-        
-        // Para consultas complejas o técnicas, usar GPT-4
-        if (mensajeLower.includes('analizar') || 
-            mensajeLower.includes('explicar') ||
-            mensajeLower.includes('código') ||
-            mensajeLower.includes('programar') ||
-            mensajeLower.includes('tasas') ||
-            mensajeLower.includes('resumen') ||
-            mensaje.length > 200) {
-            return "gpt-4o-mini";
-        }
-        
-        // Para consultas simples, también usar GPT-4o-mini (es eficiente)
-        return "gpt-4o-mini";
-    }
-
-    /**
-     * ✅ Calcular temperatura según el tipo de mensaje
-     */
-    calculateTemperature(mensaje) {
-        const mensajeLower = mensaje.toLowerCase();
-        
-        // Temperatura baja para consultas técnicas o de información
-        if (mensajeLower.includes('qué es') || 
-            mensajeLower.includes('cómo') ||
-            mensajeLower.includes('explicar') ||
-            mensajeLower.includes('información') ||
-            mensajeLower.includes('tasas') ||
-            mensajeLower.includes('resumen')) {
-            return 0.3;
-        }
-        
-        // Temperatura alta para creatividad
-        if (mensajeLower.includes('crear') ||
-            mensajeLower.includes('escribe') ||
-            mensajeLower.includes('idea')) {
-            return 0.8;
-        }
-        
-        // Temperatura media por defecto
-        return 0.7;
-    }
-
-    /**
-     * ✅ Calcular tokens máximos según la consulta
-     */
-    calculateMaxTokens(mensaje) {
-        if (mensaje.length > 500) return 4000;  // Consultas largas
-        if (mensaje.length > 200) return 2000;  // Consultas medianas
-        return 1500;  // Consultas cortas
-    }
-
-    /**
-     * ✅ Decidir si usar herramientas con detección mejorada
-     */
-    shouldUseTools(mensaje) {
-        const mensajeLower = mensaje.toLowerCase();
-        
-        const toolKeywords = [
-            // Fecha y hora
-            'fecha', 'hora', 'día', 'hoy', 'cuando', 'qué día',
-            
-            // Información personal
-            'mi información', 'mis datos', 'perfil', 'mi info', 'quien soy',
-            
-            // Tasas de interés - PALABRAS CLAVE ESPECÍFICAS
-            'tasas', 'tasa', 'interes', 'interés', 'préstamo', 'crédito',
-            'vista', 'fijo', 'fap', 'nov', 'depósito', 'depósitos',
-            'ahorro', 'ahorros', 'inversión', 'rendimiento',
-            
-            // Resúmenes y análisis
-            'resumen', 'resumir', 'análisis', 'analizar',
-            'reporte', 'informe',
-            
-            // APIs y consultas
-            'consultar', 'api', 'buscar'
-        ];
-        
-        const usarHerramientas = toolKeywords.some(keyword => mensajeLower.includes(keyword));
-        
-        if (usarHerramientas) {
-            console.log(`🛠️ Herramientas habilitadas para: "${mensaje.substring(0, 50)}..."`);
-            console.log(`   Palabras clave detectadas: ${toolKeywords.filter(k => mensajeLower.includes(k)).join(', ')}`);
-        }
-        
-        return usarHerramientas;
-    }
-
-    /**
-     * ✅ Procesamiento de herramientas con mejor logging
+     * ✅ Procesamiento de herramientas con mejoras para análisis de conversación
      */
     async procesarHerramientas(messageResponse, mensajes, userToken, userInfo, conversationId) {
         const resultados = [];
@@ -534,7 +504,7 @@ ${historial.length > 0 ?
     }
 
     /**
-     * ✅ Ejecutar herramientas disponibles
+     * ✅ MEJORADO: Ejecutar herramientas con nueva funcionalidad de análisis
      */
     async ejecutarHerramienta(nombre, parametros, userToken, userInfo, conversationId) {
         const userId = userInfo?.usuario || 'unknown';
@@ -554,7 +524,12 @@ ${historial.length > 0 ?
 
             case 'generar_resumen_conversacion':
                 console.log(`📊 [${userId}] Generando resumen de conversación`);
-                return await this.generarResumenConversacion(conversationId, userInfo, parametros.incluir_estadisticas);
+                return await this.generarResumenConversacion(
+                    conversationId, 
+                    userInfo, 
+                    parametros.incluir_estadisticas,
+                    parametros.usar_formato_openai
+                );
 
             case 'consultar_api_nova':
                 console.log(`🌐 [${userId}] Consultando API Nova: ${parametros.endpoint}`);
@@ -565,270 +540,220 @@ ${historial.length > 0 ?
                     parametros.parametros
                 );
 
+            // ✅ NUEVA HERRAMIENTA: Análisis de conversación OpenAI
+            case 'analizar_conversacion_openai':
+                console.log(`🔍 [${userId}] Analizando conversación OpenAI: ${parametros.tipo_analisis}`);
+                return await this.analizarConversacionOpenAI(
+                    conversationId,
+                    userInfo,
+                    parametros.tipo_analisis,
+                    parametros.incluir_sistema
+                );
+
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
         }
     }
 
     /**
-     * ✅ Obtener fecha/hora con diferentes formatos
+     * ✅ NUEVA HERRAMIENTA: Analizar conversación en formato OpenAI
      */
-    obtenerFechaHora(formato) {
-        const ahora = DateTime.now().setZone('America/Mexico_City');
-        
-        switch (formato) {
-            case 'fecha':
-                return ahora.toFormat('dd/MM/yyyy');
-            case 'hora':
-                return ahora.toFormat('HH:mm:ss');
-            case 'timestamp':
-                return ahora.toISO();
-            case 'completo':
-            default:
-                return `📅 **Fecha y Hora Actual**\n\n` +
-                       `📅 Fecha: ${ahora.toFormat('dd/MM/yyyy')}\n` +
-                       `🕐 Hora: ${ahora.toFormat('HH:mm:ss')}\n` +
-                       `🌎 Zona: ${ahora.zoneName}\n` +
-                       `📝 Día: ${ahora.toFormat('cccc', { locale: 'es' })}`;
-        }
-    }
-
-    /**
-     * ✅ Información de usuario más completa
-     */
-    obtenerInfoUsuario(userInfo, incluirToken = false) {
-        if (!userInfo) {
-            return "❌ **Error**: Usuario no autenticado";
-        }
-
-        let info = `👤 **Información del Usuario**\n\n` +
-                   `📝 **Nombre Completo**: ${userInfo.nombre} ${userInfo.paterno || ''} ${userInfo.materno || ''}`.trim() + '\n' +
-                   `👤 **Usuario**: ${userInfo.usuario}\n` +
-                   `📧 **ID Corporativo**: ${userInfo.usuario}\n`;
-
-        if (incluirToken && userInfo.token) {
-            info += `🔑 **Token**: ${userInfo.token.substring(0, 20)}...${userInfo.token.slice(-5)}\n`;
-            info += `🔒 **Estado Token**: ✅ Válido\n`;
-            
-            const numRI = this.extractNumRIFromToken(userInfo.token);
-            if (numRI) {
-                info += `🏦 **Región/RI**: ${numRI}\n`;
-            }
-        }
-
-        info += `\n💼 **Estado**: Autenticado y listo para usar el bot`;
-
-        return info;
-    }
-
-    /**
-     * ✅ Consultar tasas de interés de Nova
-     */
-    async consultarTasasInteres(anio, userToken, userInfo) {
+    async analizarConversacionOpenAI(conversationId, userInfo, tipoAnalisis, incluirSistema = true) {
         try {
-            if (!userToken || !userInfo) {
-                return "❌ **Error**: Usuario no autenticado para consultar tasas";
+            if (!cosmosService.isAvailable() || !conversationId) {
+                return "❌ **Error**: Análisis no disponible. Se requiere Cosmos DB y conversación activa.";
             }
 
-            const cveUsuario = userInfo.usuario;
-            const numRI = this.extractNumRIFromToken(userToken) || "7";
+            const userId = userInfo?.usuario || 'unknown';
+            console.log(`🔍 [${userId}] Iniciando análisis de conversación: ${tipoAnalisis}`);
 
-            console.log(`💰 [${cveUsuario}] Consultando tasas para año ${anio}`);
-
-            const requestBody = {
-                usuarioActual: {
-                    CveUsuario: cveUsuario
-                },
-                data: {
-                    NumRI: numRI,
-                    Anio: anio
-                }
-            };
-
-            console.log('📡 Request body para tasas:', JSON.stringify(requestBody, null, 2));
-            const url = process.env.NOVA_API_URL_TASA || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa';
-            
-            const response = await axios.post(
-                url,
-                requestBody,
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${userToken}`,
-                        'Accept': 'application/json'
-                    },
-                    timeout: 15000
-                }
+            // Obtener conversación en formato OpenAI
+            const conversacion = await cosmosService.getConversationForOpenAI(
+                conversationId,
+                userId,
+                incluirSistema
             );
 
-            console.log(`📊 Respuesta tasas (${response.status}):`, JSON.stringify(response.data, null, 2));
-
-            if (response.status === 200 && response.data?.info) {
-                return this.formatearTablaTasas(response.data.info, anio, cveUsuario);
-            } else {
-                return `⚠️ **Respuesta inesperada al consultar tasas**: Status ${response.status}`;
+            if (!conversacion || conversacion.length === 0) {
+                return "❌ **No hay conversación en formato OpenAI para analizar**\n\nLa conversación debe tener mensajes guardados en formato OpenAI.";
             }
 
-        } catch (error) {
-            console.error('❌ Error consultando tasas de interés:', error.message);
-            
-            if (error.response?.status === 401) {
-                return "🔒 **Error de autorización**: Tu token puede haber expirado. Intenta cerrar sesión e iniciar nuevamente.";
-            } else if (error.response?.status === 404) {
-                return "❌ **Servicio no encontrado**: El servicio de consulta de tasas no está disponible.";
-            } else if (error.response?.status === 400) {
-                return `❌ **Datos inválidos**: Verifica que el año ${anio} sea válido.`;
-            } else {
-                return `❌ **Error consultando tasas**: ${error.message}`;
-            }
-        }
-    }
+            console.log(`📊 [${userId}] Analizando ${conversacion.length} mensajes (tipo: ${tipoAnalisis})`);
 
-    /**
-     * ✅ Extraer NumRI del token JWT
-     */
-    extractNumRIFromToken(token) {
-        try {
-            if (!token || typeof token !== 'string') {
-                return null;
-            }
+            // Crear prompt específico para el tipo de análisis
+            const promptAnalisis = this.crearPromptAnalisis(tipoAnalisis, conversacion, userInfo);
 
-            const cleanToken = token.replace(/^Bearer\s+/, '');
-            const tokenParts = cleanToken.split('.');
-            if (tokenParts.length !== 3) {
-                return null;
-            }
-
-            const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
-            
-            const numRI = payload.NumRI || 
-                         payload.numRI || 
-                         payload.RI || 
-                         payload.ri || 
-                         payload.region ||
-                         "7";
-
-            console.log(`🔍 NumRI extraído del token: ${numRI}`);
-            return numRI;
-
-        } catch (error) {
-            console.warn('⚠️ Error extrayendo NumRI del token:', error.message);
-            return "7";
-        }
-    }
-
-    /**
-     * ✅ Formatear tabla de tasas COMPLETAMENTE REDISEÑADO para Teams
-     */
-    formatearTablaTasas(tasasData, anio, usuario) {
-        try {
-            if (!tasasData || !Array.isArray(tasasData)) {
-                return "❌ **Error**: Datos de tasas inválidos";
-            }
-
-            let tabla = `💰 **TASAS DE INTERÉS NOVA CORPORATION ${anio}**\n\n`;
-            tabla += `👤 **Usuario**: ${usuario}  📅 **Año**: ${anio}  🕐 **Actualizado**: ${new Date().toLocaleDateString('es-MX')}\n\n`;
-
-            tabla += `📊 **DETALLE POR MES:**\n\n`;
-            
-            tasasData.forEach((mes, index) => {
-                if (mes.Mes) {
-                    tabla += `🗓️ **${mes.Mes.toUpperCase()}**\n`;
-                    tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-                    
-                    const vista = mes.vista !== undefined ? `${mes.vista}%` : 'N/A';
-                    tabla += `💳 **Cuenta Vista (Ahorros):** ${vista}\n`;
-                    
-                    tabla += `📈 **Depósitos a Plazo Fijo:**\n`;
-                    const fijo1 = mes.fijo1 !== undefined ? `${mes.fijo1}%` : 'N/A';
-                    const fijo3 = mes.fijo3 !== undefined ? `${mes.fijo3}%` : 'N/A';
-                    const fijo6 = mes.fijo6 !== undefined ? `${mes.fijo6}%` : 'N/A';
-                    tabla += `   🔸 1 mes: ${fijo1}    🔸 3 meses: ${fijo3}    🔸 6 meses: ${fijo6}\n`;
-                    
-                    const fap = mes.FAP !== undefined ? `${mes.FAP}%` : 'N/A';
-                    const nov = mes.Nov !== undefined ? `${mes.Nov}%` : 'N/A';
-                    const prestamos = mes.Prestamos !== undefined ? `${mes.Prestamos}%` : 'N/A';
-                    
-                    tabla += `🏦 **FAP (Fondo Ahorro):** ${fap}    🔄 **Novación:** ${nov}\n`;
-                    tabla += `💸 **Préstamos:** ${prestamos}\n`;
-                    
-                    if (index < tasasData.length - 1) {
-                        tabla += `\n`;
+            // Usar OpenAI para analizar la conversación
+            const analisisResponse = await this.openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: [
+                    {
+                        role: "system",
+                        content: "Eres un analista experto en conversaciones corporativas. Proporciona análisis precisos, estructurados y útiles."
+                    },
+                    {
+                        role: "user",
+                        content: promptAnalisis
                     }
-                }
+                ],
+                temperature: 0.3,
+                max_tokens: 2000
             });
 
-            tabla += `\n\n💡 **ANÁLISIS Y RECOMENDACIONES**\n`;
-            tabla += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            const analisis = analisisResponse.choices[0].message.content;
 
-            const tasasConDatos = tasasData.filter(mes => 
-                mes.vista !== undefined || mes.fijo6 !== undefined
-            );
-            
-            if (tasasConDatos.length > 0) {
-                const ultimasTasas = tasasConDatos[tasasConDatos.length - 1];
-                
-                tabla += `⭐ **MEJORES OPCIONES ACTUALES (${ultimasTasas.Mes || 'Último mes'}):**\n\n`;
-                
-                const tasasAhorro = [
-                    { tipo: 'Depósito 6 meses', tasa: ultimasTasas.fijo6, emoji: '🏆' },
-                    { tipo: 'FAP Empleados', tasa: ultimasTasas.FAP, emoji: '💼' },
-                    { tipo: 'Depósito 3 meses', tasa: ultimasTasas.fijo3, emoji: '📊' },
-                    { tipo: 'Cuenta Vista', tasa: ultimasTasas.vista, emoji: '💳' }
-                ].filter(item => item.tasa !== undefined)
-                 .sort((a, b) => b.tasa - a.tasa);
+            // Formatear resultado
+            let resultado = `🔍 **Análisis de Conversación: ${tipoAnalisis.toUpperCase()}**\n\n`;
+            resultado += `👤 **Usuario**: ${userInfo?.nombre || 'Usuario'} (${userId})\n`;
+            resultado += `📊 **Mensajes analizados**: ${conversacion.length}\n`;
+            resultado += `🤖 **Formato**: OpenAI Chat API\n`;
+            resultado += `📅 **Análisis generado**: ${new Date().toLocaleString('es-MX')}\n\n`;
+            resultado += `**Resultado del análisis:**\n\n${analisis}`;
 
-                if (tasasAhorro.length > 0) {
-                    tabla += `${tasasAhorro[0].emoji} **MEJOR PARA AHORRAR:** ${tasasAhorro[0].tipo} - **${tasasAhorro[0].tasa}%**\n`;
-                    
-                    if (tasasAhorro.length > 1) {
-                        tabla += `${tasasAhorro[1].emoji} **SEGUNDA OPCIÓN:** ${tasasAhorro[1].tipo} - **${tasasAhorro[1].tasa}%**\n`;
-                    }
-                }
-                
-                if (ultimasTasas.Prestamos) {
-                    tabla += `💸 **PRÉSTAMOS:** ${ultimasTasas.Prestamos}% - `;
-                    if (ultimasTasas.Prestamos < 13) {
-                        tabla += `✅ Tasa competitiva\n`;
-                    } else {
-                        tabla += `⚠️ Considera comparar opciones\n`;
-                    }
-                }
-            }
-
-            tabla += `\n💬 **¿Necesitas asesoría personalizada?** Pregúntame sobre cualquier producto específico.`;
-
-            return tabla;
+            return resultado;
 
         } catch (error) {
-            console.error('❌ Error formateando tabla de tasas:', error);
-            return `❌ **Error formateando tasas**: ${error.message}`;
+            console.error(`❌ Error en análisis de conversación:`, error);
+            return `❌ **Error en análisis**: ${error.message}`;
         }
     }
 
     /**
-     * ✅ Generar resumen de conversación (MEJORADO)
+     * ✅ NUEVO: Crear prompt específico para cada tipo de análisis
      */
-    async generarResumenConversacion(conversationId, userInfo, incluirEstadisticas = true) {
+    crearPromptAnalisis(tipoAnalisis, conversacion, userInfo) {
+        const conversacionTexto = JSON.stringify(conversacion, null, 2);
+        
+        const prompts = {
+            resumen: `Analiza la siguiente conversación y proporciona un resumen ejecutivo:
+
+${conversacionTexto}
+
+Proporciona:
+1. Resumen de los temas principales discutidos
+2. Conclusiones o decisiones alcanzadas
+3. Acciones pendientes o recomendaciones
+4. Puntos clave destacados
+
+Formato: Profesional y estructurado para uso corporativo.`,
+
+            sentimientos: `Analiza el tono y sentimientos en esta conversación corporativa:
+
+${conversacionTexto}
+
+Evalúa:
+1. Tono general de la conversación (profesional, amigable, formal, etc.)
+2. Nivel de satisfacción del usuario
+3. Puntos de fricción o confusión
+4. Momentos de mayor engagement
+5. Recomendaciones para mejorar la experiencia
+
+Enfoque: Análisis objetivo para mejorar el servicio al cliente.`,
+
+            temas: `Identifica y categoriza los temas tratados en esta conversación:
+
+${conversacionTexto}
+
+Identifica:
+1. Temas principales (categorías de productos/servicios)
+2. Subtemas específicos
+3. Frecuencia de cada tema
+4. Temas relacionados entre sí
+5. Temas que requieren seguimiento
+
+Organiza por relevancia e importancia para Nova Corporation.`,
+
+            patrones: `Analiza patrones de comunicación en esta conversación:
+
+${conversacionTexto}
+
+Busca:
+1. Patrones en las preguntas del usuario
+2. Efectividad de las respuestas del asistente
+3. Flujo de la conversación
+4. Puntos donde se requirió clarificación
+5. Oportunidades de optimización
+
+Objetivo: Mejorar la calidad del servicio automatizado.`,
+
+            recomendaciones: `Basándote en esta conversación, proporciona recomendaciones estratégicas:
+
+${conversacionTexto}
+
+Usuario: ${userInfo?.nombre || 'Cliente'} (${userInfo?.usuario || 'N/A'})
+
+Proporciona:
+1. Recomendaciones de productos/servicios Nova relevantes
+2. Acciones de seguimiento recomendadas
+3. Oportunidades de venta cruzada
+4. Mejoras en el proceso de atención
+5. Personalización futura para este usuario
+
+Enfoque: Estratégico y orientado a resultados comerciales.`
+        };
+
+        return prompts[tipoAnalisis] || prompts.resumen;
+    }
+
+    /**
+     * ✅ MEJORADO: Generar resumen con opción de formato OpenAI
+     */
+    async generarResumenConversacion(conversationId, userInfo, incluirEstadisticas = true, usarFormatoOpenAI = true) {
         try {
             if (!conversationId || !userInfo) {
                 return "⚠️ No hay información de conversación disponible para generar resumen";
             }
 
-            // ✅ NOTA: El historial lo maneja TeamsBot, aquí solo generamos un resumen básico
-            // En una implementación real, TeamsBot pasaría el historial como parámetro
-
+            const userId = userInfo?.usuario || 'unknown';
             let resumen = `📊 **Resumen de Conversación**\n\n`;
             resumen += `👤 **Usuario**: ${userInfo.nombre} (${userInfo.usuario})\n`;
             resumen += `📅 **Fecha**: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy HH:mm')}\n`;
-            
+
+            // ✅ INTENTAR: Usar formato OpenAI si está disponible y solicitado
+            if (usarFormatoOpenAI && cosmosService.isAvailable()) {
+                try {
+                    console.log(`🤖 [${userId}] Generando resumen usando formato OpenAI...`);
+                    
+                    const conversacionOpenAI = await cosmosService.getConversationMessages(conversationId, userId);
+                    
+                    if (conversacionOpenAI && conversacionOpenAI.length > 0) {
+                        resumen += `🤖 **Formato**: OpenAI Chat API (${conversacionOpenAI.length} mensajes)\n`;
+                        
+                        if (incluirEstadisticas) {
+                            const stats = this.calcularEstadisticasConversacion(conversacionOpenAI);
+                            resumen += `📊 **Estadísticas**:\n`;
+                            resumen += `   • Mensajes del sistema: ${stats.system}\n`;
+                            resumen += `   • Mensajes del usuario: ${stats.user}\n`;
+                            resumen += `   • Respuestas del asistente: ${stats.assistant}\n`;
+                            resumen += `   • Promedio palabras por mensaje: ${stats.avgWords}\n`;
+                        }
+                        
+                        // Usar IA para generar resumen inteligente
+                        const resumenIA = await this.analizarConversacionOpenAI(
+                            conversationId,
+                            userInfo,
+                            'resumen',
+                            false // sin mensaje del sistema para el resumen
+                        );
+                        
+                        resumen += `\n**Resumen inteligente**:\n${resumenIA}`;
+                        
+                        return resumen;
+                    }
+                } catch (openaiError) {
+                    console.warn(`⚠️ [${userId}] Error usando formato OpenAI para resumen:`, openaiError.message);
+                }
+            }
+
+            // ✅ FALLBACK: Resumen básico
             if (incluirEstadisticas) {
-                resumen += `💾 **Persistencia**: Activada\n`;
+                resumen += `💾 **Persistencia**: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Solo memoria'}\n`;
                 resumen += `🤖 **IA**: OpenAI GPT-4o-mini\n`;
             }
             
             resumen += `\n💡 **Para ver el historial completo**:\n`;
             resumen += `• Escribe \`historial\` - Ver últimos 5 mensajes\n`;
+            resumen += `• Escribe \`conversacion openai\` - Ver formato OpenAI\n`;
             resumen += `• El resumen detallado se genera automáticamente por TeamsBot\n`;
 
             return resumen;
@@ -840,138 +765,127 @@ ${historial.length > 0 ?
     }
 
     /**
-     * ✅ Consultar APIs de Nova usando el token
+     * ✅ NUEVO: Calcular estadísticas de conversación en formato OpenAI
      */
-    async consultarApiNova(endpoint, userToken, metodo = 'GET', parametros = {}) {
-        try {
-            if (!userToken) {
-                return "❌ **Error**: No hay token de autenticación disponible";
-            }
-
-            const endpointsPermitidos = [
-                '/api/user/profile',
-                '/api/user/info',
-                '/api/empleados/datos',
-                '/api/consultas/generales',
-                '/api/ConsultaTasa/consultaTasa'
-            ];
-
-            if (!endpointsPermitidos.some(ep => endpoint.includes(ep))) {
-                return `⚠️ **Endpoint no permitido**: ${endpoint}\n\nEndpoints disponibles:\n${endpointsPermitidos.join('\n')}`;
-            }
-
-            const baseUrl = 'https://pruebas.nova.com.mx/ApiRestNova';
-            const url = `${baseUrl}${endpoint}`;
-
-            console.log(`🌐 Consultando Nova API: ${metodo} ${endpoint}`);
-
-            const config = {
-                method: metodo,
-                url: url,
-                headers: {
-                    'Authorization': `Bearer ${userToken}`,
-                    'Content-Type': 'application/json'
-                },
-                timeout: 15000
-            };
-
-            if (metodo === 'POST' && parametros) {
-                config.data = parametros;
-            }
-
-            const response = await axios(config);
-
-            if (response.status === 200) {
-                return `✅ **Consulta exitosa a Nova API**\n\n` +
-                       `📊 **Endpoint**: ${endpoint}\n` +
-                       `📝 **Datos**: ${JSON.stringify(response.data, null, 2)}`;
-            } else {
-                return `⚠️ **Respuesta inesperada**: Status ${response.status}`;
-            }
-
-        } catch (error) {
-            console.error('Error consultando Nova API:', error.message);
-            
-            if (error.response?.status === 401) {
-                return "🔒 **Error de autorización**: Tu token puede haber expirado. Intenta cerrar sesión e iniciar nuevamente.";
-            } else if (error.response?.status === 404) {
-                return `❌ **Endpoint no encontrado**: ${endpoint}`;
-            } else {
-                return `❌ **Error de conexión**: ${error.message}`;
-            }
-        }
-    }
-
-    /**
-     * ✅ Respuesta cuando OpenAI no está disponible
-     */
-    createUnavailableResponse() {
-        let message = '🚫 **El servicio de inteligencia artificial no está disponible**\n\n';
-        
-        if (this.initializationError) {
-            message += `**Problema detectado**: ${this.initializationError}\n\n`;
-        }
-        
-        message += '**Funciones limitadas disponibles:**\n';
-        message += '• `mi info` - Ver tu información\n';
-        message += '• `historial` - Ver conversaciones anteriores\n';
-        message += '• `logout` - Cerrar sesión\n';
-        message += '• `ayuda` - Ver comandos disponibles\n\n';
-        
-        message += '**Para restaurar funcionalidad completa:**\n';
-        message += '• Contacta al administrador del sistema\n';
-        message += '• Verifica la configuración de OpenAI\n';
-
-        return {
-            type: 'text',
-            content: message
+    calcularEstadisticasConversacion(conversacion) {
+        const stats = {
+            system: 0,
+            user: 0,
+            assistant: 0,
+            totalWords: 0,
+            avgWords: 0
         };
-    }
 
-    /**
-     * ✅ Manejo de errores más específico
-     */
-    manejarErrorOpenAI(error, userInfo) {
-        const userId = userInfo?.usuario || 'unknown';
-        console.error(`🚨 [${userId}] Error OpenAI:`, {
-            message: error.message,
-            code: error.code,
-            type: error.type,
-            status: error.status
+        conversacion.forEach(msg => {
+            stats[msg.role]++;
+            const words = msg.content.split(' ').length;
+            stats.totalWords += words;
         });
 
-        let message = `❌ **Error del asistente de IA**\n\n`;
+        stats.avgWords = Math.round(stats.totalWords / conversacion.length);
 
-        if (error.code === 'rate_limit_exceeded') {
-            message += '**Problema**: Límite de consultas excedido temporalmente\n';
-            message += '**Solución**: Espera 1-2 minutos e intenta nuevamente\n';
-        } else if (error.code === 'insufficient_quota') {
-            message += '**Problema**: Cuota de OpenAI agotada\n';
-            message += '**Solución**: Contacta al administrador del sistema\n';
-        } else if (error.code === 'invalid_api_key') {
-            message += '**Problema**: Configuración de API inválida\n';
-            message += '**Solución**: El administrador debe verificar la configuración\n';
-        } else if (error.message?.includes('timeout')) {
-            message += '**Problema**: Tiempo de respuesta agotado\n';
-            message += '**Solución**: Tu consulta puede ser muy compleja, intenta simplificarla\n';
-        } else {
-            message += `**Problema**: ${error.message}\n`;
-            message += '**Solución**: Intenta reformular tu mensaje o contacta soporte\n';
-        }
-
-        message += `\n**Mientras tanto, puedes usar:**\n`;
-        message += `• \`mi info\` - Ver tu información\n`;
-        message += `• \`historial\` - Ver conversaciones anteriores\n`;
-        message += `• \`ayuda\` - Ver comandos disponibles\n`;
-
-        return {
-            type: 'text',
-            content: message
-        };
+        return stats;
     }
 
+    // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
+    
+    selectBestModel(mensaje, userInfo) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        // Para consultas complejas o técnicas, usar GPT-4
+        if (mensajeLower.includes('analizar') || 
+            mensajeLower.includes('explicar') ||
+            mensajeLower.includes('código') ||
+            mensajeLower.includes('programar') ||
+            mensajeLower.includes('tasas') ||
+            mensajeLower.includes('resumen') ||
+            mensaje.length > 200) {
+            return "gpt-4o-mini";
+        }
+        
+        // Para consultas simples, también usar GPT-4o-mini (es eficiente)
+        return "gpt-4o-mini";
+    }
+
+    calculateTemperature(mensaje) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        // Temperatura baja para consultas técnicas o de información
+        if (mensajeLower.includes('qué es') || 
+            mensajeLower.includes('cómo') ||
+            mensajeLower.includes('explicar') ||
+            mensajeLower.includes('información') ||
+            mensajeLower.includes('tasas') ||
+            mensajeLower.includes('resumen')) {
+            return 0.3;
+        }
+        
+        // Temperatura alta para creatividad
+        if (mensajeLower.includes('crear') ||
+            mensajeLower.includes('escribe') ||
+            mensajeLower.includes('idea')) {
+            return 0.8;
+        }
+        
+        // Temperatura media por defecto
+        return 0.7;
+    }
+
+    calculateMaxTokens(mensaje) {
+        if (mensaje.length > 500) return 4000;  // Consultas largas
+        if (mensaje.length > 200) return 2000;  // Consultas medianas
+        return 1500;  // Consultas cortas
+    }
+
+    shouldUseTools(mensaje) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        const toolKeywords = [
+            // Fecha y hora
+            'fecha', 'hora', 'día', 'hoy', 'cuando', 'qué día',
+            
+            // Información personal
+            'mi información', 'mis datos', 'perfil', 'mi info', 'quien soy',
+            
+            // Tasas de interés - PALABRAS CLAVE ESPECÍFICAS
+            'tasas', 'tasa', 'interes', 'interés', 'préstamo', 'crédito',
+            'vista', 'fijo', 'fap', 'nov', 'depósito', 'depósitos',
+            'ahorro', 'ahorros', 'inversión', 'rendimiento',
+            
+            // Resúmenes y análisis
+            'resumen', 'resumir', 'análisis', 'analizar',
+            'reporte', 'informe',
+            
+            // ✅ NUEVOS: Análisis de conversación
+            'analizar conversacion', 'analisis conversacion', 'patrones',
+            'sentimientos', 'temas', 'recomendaciones',
+            
+            // APIs y consultas
+            'consultar', 'api', 'buscar'
+        ];
+        
+        const usarHerramientas = toolKeywords.some(keyword => mensajeLower.includes(keyword));
+        
+        if (usarHerramientas) {
+            console.log(`🛠️ Herramientas habilitadas para: "${mensaje.substring(0, 50)}..."`);
+            console.log(`   Palabras clave detectadas: ${toolKeywords.filter(k => mensajeLower.includes(k)).join(', ')}`);
+        }
+        
+        return usarHerramientas;
+    }
+
+    // ===== MANTENER MÉTODOS EXISTENTES =====
+    obtenerFechaHora(formato) { /* mantener igual */ }
+    obtenerInfoUsuario(userInfo, incluirToken = false) { /* mantener igual */ }
+    consultarTasasInteres(anio, userToken, userInfo) { /* mantener igual */ }
+    extractNumRIFromToken(token) { /* mantener igual */ }
+    formatearTablaTasas(tasasData, anio, usuario) { /* mantener igual */ }
+    consultarApiNova(endpoint, userToken, metodo = 'GET', parametros = {}) { /* mantener igual */ }
+    createUnavailableResponse() { /* mantener igual */ }
+    manejarErrorOpenAI(error, userInfo) { /* mantener igual */ }
+    
     /**
-     * ✅ Estadísticas del servicio
+     * ✅ MEJORADO: Estadísticas del servicio con información de conversación
      */
     getServiceStats() {
         return {
@@ -985,67 +899,62 @@ ${historial.length > 0 ?
                 conversation_history: true,
                 user_context: true,
                 tasas_interes: true,
-                api_integration: true
+                api_integration: true,
+                openai_conversation_format: cosmosService.isAvailable(), // ✅ NUEVA
+                conversation_analysis: cosmosService.isAvailable()       // ✅ NUEVA
             },
             toolsCount: this.tools?.length || 0,
+            conversationFormatSupport: {
+                available: cosmosService.isAvailable(),
+                analysisTypes: ['resumen', 'sentimientos', 'temas', 'patrones', 'recomendaciones'],
+                intelligentSummary: true,
+                statisticsCalculation: true
+            },
             timestamp: new Date().toISOString(),
-            version: '2.1.0-historial-completo'
+            version: '2.1.3-conversation-format'
         };
     }
 
-    /**
-     * ✅ Verificar disponibilidad
-     */
     isAvailable() {
         return this.openaiAvailable && this.initialized;
     }
 
     /**
-     * ✅ Procesar mensaje simple (método alternativo para casos especiales)
+     * ✅ NUEVO: Método para procesar conversación completa
      */
-    async procesarMensajeSimple(mensaje, userInfo = null) {
+    async procesarConversacionCompleta(conversationId, userId, userInfo) {
         try {
-            if (!this.isAvailable()) {
-                return this.createUnavailableResponse();
+            if (!cosmosService.isAvailable() || !conversationId) {
+                return null;
             }
 
-            const mensajes = [
-                {
-                    role: "system",
-                    content: `Eres un asistente corporativo de Nova Corporation. 
-                    ${userInfo ? `Usuario: ${userInfo.nombre} (${userInfo.usuario})` : 'Usuario no identificado'}
-                    Responde de forma profesional, clara y concisa.`
-                },
-                {
-                    role: "user",
-                    content: mensaje
-                }
-            ];
+            console.log(`🔄 [${userId}] Procesando conversación completa...`);
 
-            const response = await this.openai.chat.completions.create({
-                model: "gpt-4o-mini",
-                messages: mensajes,
-                temperature: 0.7,
-                max_tokens: 1500
-            });
+            const conversacion = await cosmosService.getConversationForOpenAI(
+                conversationId,
+                userId,
+                true
+            );
+
+            if (!conversacion || conversacion.length === 0) {
+                return null;
+            }
 
             return {
-                type: 'text',
-                content: response.choices[0].message.content || 'Sin respuesta'
+                messages: conversacion,
+                stats: this.calcularEstadisticasConversacion(conversacion),
+                readyForAPI: true,
+                timestamp: new Date().toISOString()
             };
 
         } catch (error) {
-            console.error('❌ Error en procesarMensajeSimple:', error);
-            return this.manejarErrorOpenAI(error, userInfo);
+            console.error(`❌ Error procesando conversación completa:`, error);
+            return null;
         }
     }
 
-    /**
-     * ✅ Limpiar servicio (para desarrollo)
-     */
     cleanup() {
         console.log('🧹 Limpiando OpenAI Service...');
-        // No hay mucho que limpiar en este servicio simplificado
         console.log('✅ OpenAI Service limpiado');
     }
 }

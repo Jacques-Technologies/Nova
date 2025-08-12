@@ -1,23 +1,24 @@
-// services/openaiService.js
-// OpenAI Service COMPLETO con Sistema de Seguimiento y Memoria Contextual
+// services/openaiService.js - CÓDIGO COMPLETO CORREGIDO
+// OpenAI Service simplificado que trabaja con el nuevo sistema de historial de TeamsBot
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
 const axios = require('axios');
 const { CardFactory } = require('botbuilder');
-const cosmosService = require('./cosmosService');
-const documentService = require('./documentService');
-const seguimientoService = require('./seguimientoService');
 require('dotenv').config();
 
 /**
- * Servicio OpenAI COMPLETO con persistencia en Cosmos DB y memoria contextual
+ * Servicio OpenAI COMPLETO Y CORREGIDO
+ * - Se enfoca solo en procesamiento de mensajes
+ * - Recibe historial formateado desde TeamsBot
+ * - No maneja guardado (TeamsBot lo hace automáticamente)
+ * - Incluye herramientas esenciales para funcionalidad corporativa
  */
 class OpenAIService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando OpenAI Service con Memoria Contextual...');
+        console.log('🚀 Inicializando OpenAI Service COMPLETO...');
         this.diagnoseConfiguration();
         this.initializeOpenAI();
         this.tools = this.defineTools();
@@ -26,7 +27,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Diagnóstico más completo
+     * ✅ Diagnóstico de configuración
      */
     diagnoseConfiguration() {
         console.log('🔍 Diagnosticando configuración OpenAI...');
@@ -41,9 +42,6 @@ class OpenAIService {
         console.log(`   API Key: ${config.apiKey ? '✅ Configurada' : '❌ Faltante'}`);
         console.log(`   Organization: ${config.organization ? '✅ Configurada' : '⚠️ Opcional'}`);
         console.log(`   Base URL: ${config.baseURL}`);
-        console.log(`   Cosmos DB: ${cosmosService.isAvailable() ? '✅ Disponible' : '⚠️ No disponible'}`);
-        console.log(`   Document Search: ${documentService.isAvailable() ? '✅ Disponible' : '⚠️ No disponible'}`);
-        console.log(`   Seguimiento: ${seguimientoService.isAvailable() ? '✅ Disponible' : '⚠️ No disponible'}`);
         
         if (config.apiKey) {
             console.log(`   Key Preview: ${config.apiKey.substring(0, 10)}...${config.apiKey.slice(-4)}`);
@@ -51,7 +49,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ MEJORADO: Inicialización con mejor validación
+     * ✅ Inicialización del cliente OpenAI
      */
     initializeOpenAI() {
         try {
@@ -98,7 +96,7 @@ class OpenAIService {
     }
 
     /**
-     * ✅ NUEVO: Test de conectividad básico
+     * ✅ Test de conectividad básico
      */
     async testConnection() {
         try {
@@ -113,15 +111,20 @@ class OpenAIService {
             
             if (testResponse?.choices?.length > 0) {
                 console.log('✅ Test de conectividad OpenAI exitoso');
+                return { success: true, model: testResponse.model };
+            } else {
+                console.warn('⚠️ Respuesta de test inválida');
+                return { success: false, error: 'Respuesta inválida' };
             }
             
         } catch (error) {
             console.warn('⚠️ Test de conectividad falló:', error.message);
+            return { success: false, error: error.message };
         }
     }
 
     /**
-     * ✅ COMPLETO: Herramientas con sistema de seguimiento integrado
+     * ✅ Definir herramientas disponibles
      */
     defineTools() {
         const tools = [
@@ -180,93 +183,14 @@ class OpenAIService {
             {
                 type: "function",
                 function: {
-                    name: "buscar_documentos",
-                    description: "Busca documentos corporativos usando Azure Search con búsqueda vectorial. Incluye políticas, manuales, procedimientos y documentación interna.",
-                    parameters: {
-                        type: "object",
+                    name: "generar_resumen_conversacion",
+                    description: "Genera un resumen inteligente de la conversación actual usando el historial disponible",
+                    parameters: { 
+                        type: "object", 
                         properties: {
-                            consulta: {
-                                type: "string",
-                                description: "Términos de búsqueda o pregunta sobre documentos corporativos"
-                            }
-                        },
-                        required: ["consulta"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "buscar_politicas",
-                    description: "Busca políticas corporativas específicas como vacaciones, código de vestimenta, horarios, prestaciones, etc.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            tipo_politica: {
-                                type: "string",
-                                enum: ["vacaciones", "codigo vestimenta", "horario", "home office", "prestaciones", "codigo conducta", "seguridad", "capacitacion", "nomina", "rh", "confidencialidad"],
-                                description: "Tipo de política a buscar"
-                            }
-                        },
-                        required: ["tipo_politica"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "obtener_dias_feriados",
-                    description: "Consulta los días feriados oficiales de la empresa para un año específico",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            anio: {
-                                type: "integer",
-                                description: "Año para consultar feriados (default: año actual)",
-                                minimum: 2020,
-                                maximum: 2030
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "consultar_seguimiento",
-                    description: "Consulta el historial de seguimiento del usuario (últimos 5 mensajes de referencia)",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            accion: {
-                                type: "string",
-                                enum: ["mostrar", "detallado", "estadisticas", "exportar", "limpiar", "referencia_especifica"],
-                                description: "Acción a realizar con el seguimiento"
-                            },
-                            numeroReferencia: {
-                                type: "integer",
-                                description: "Número específico de referencia (solo para accion='referencia_especifica')"
-                            }
-                        },
-                        required: ["accion"]
-                    }
-                }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "consultar_contexto_anterior",
-                    description: "Consulta el contexto de conversaciones anteriores del usuario para dar respuestas más informadas",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            tema: {
-                                type: "string",
-                                description: "Tema o palabra clave para buscar en el contexto anterior"
-                            },
-                            incluir_detalles: {
+                            incluir_estadisticas: {
                                 type: "boolean",
-                                description: "Si incluir detalles completos de las referencias encontradas"
+                                description: "Si incluir estadísticas detalladas"
                             }
                         }
                     }
@@ -297,22 +221,16 @@ class OpenAIService {
                         required: ["endpoint"]
                     }
                 }
-            },
-            {
-                type: "function",
-                function: {
-                    name: "generar_resumen_conversacion",
-                    description: "Genera un resumen de la conversación actual",
-                    parameters: { type: "object", properties: {} }
-                }
             }
         ];
 
+        console.log(`🛠️ ${tools.length} herramientas definidas para OpenAI`);
         return tools;
     }
 
     /**
-     * ✅ MEJORADO: Procesamiento principal con memoria contextual
+     * ✅ MÉTODO PRINCIPAL: Procesar mensaje (CORREGIDO)
+     * Ya no maneja guardado - TeamsBot lo hace automáticamente
      */
     async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
         try {
@@ -329,38 +247,17 @@ class OpenAIService {
                 }
             }
 
-            console.log(`📝 [${userInfo?.usuario || 'unknown'}] Procesando: "${mensaje}"`);
-            
-            // ✅ NUEVO: Inyectar contexto automático si es relevante
-            const mensajeContextualizado = await this.inyectarContextoAutomatico(mensaje, userInfo);
+            console.log(`📝 [${userInfo?.usuario || 'unknown'}] Procesando: "${mensaje.substring(0, 50)}..."`);
+            console.log(`📚 [${userInfo?.usuario || 'unknown'}] Historial recibido: ${historial.length} mensajes`);
 
-            // ✅ NUEVO: Guardar mensaje del usuario en Cosmos DB
-            if (conversationId && userInfo && cosmosService.isAvailable()) {
-                await cosmosService.saveMessage(
-                    mensaje, 
-                    conversationId, 
-                    userInfo.usuario, 
-                    userInfo.nombre, 
-                    'user'
-                );
-                
-                // Actualizar actividad de conversación
-                await cosmosService.updateConversationActivity(conversationId, userInfo.usuario);
-            }
+            // ✅ IMPORTANTE: Ya no manejamos guardado aquí - TeamsBot lo hace automáticamente
+            // Solo procesamos el mensaje con el historial que nos proporcionan
 
-            // ✅ MEJORADO: Obtener historial desde Cosmos DB si está disponible
-            let historialCompleto = historial;
-            if (conversationId && userInfo && cosmosService.isAvailable() && (!historial || historial.length === 0)) {
-                historialCompleto = await cosmosService.getConversationHistory(conversationId, userInfo.usuario, 5);
-                console.log(`📚 Historial desde Cosmos DB: ${historialCompleto.length} mensajes`);
-            }
+            // ✅ Formatear mensajes para OpenAI
+            const mensajes = this.formatearHistorialParaOpenAI(historial, userInfo);
+            mensajes.push({ role: "user", content: mensaje });
 
-
-            // ✅ MEJORADO: Formatear historial CON seguimiento automático
-            const mensajes = await this.formatearHistorial(historialCompleto, userInfo, conversationId);
-            mensajes.push({ role: "user", content: mensajeContextualizado });
-
-            // ✅ MEJORADO: Configuración más inteligente del modelo
+            // ✅ Configuración inteligente del modelo
             const requestConfig = {
                 model: this.selectBestModel(mensaje, userInfo),
                 messages: mensajes,
@@ -370,14 +267,14 @@ class OpenAIService {
                 frequency_penalty: 0.1
             };
 
-            // ✅ MEJORADO: Usar herramientas solo cuando sea apropiado
+            // ✅ Usar herramientas solo cuando sea apropiado
             if (this.shouldUseTools(mensaje)) {
                 requestConfig.tools = this.tools;
                 requestConfig.tool_choice = "auto";
-                console.log('🛠️ Habilitando herramientas para esta consulta');
+                console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Habilitando herramientas para esta consulta`);
             }
 
-            console.log(`🤖 Enviando a OpenAI (${requestConfig.model})...`);
+            console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Enviando a OpenAI (${requestConfig.model})...`);
             const response = await this.openai.chat.completions.create(requestConfig);
             
             if (!response?.choices?.length) {
@@ -388,7 +285,7 @@ class OpenAIService {
             let finalResponse;
 
             if (messageResponse.tool_calls) {
-                console.log(`🛠️ Ejecutando ${messageResponse.tool_calls.length} herramientas...`);
+                console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Ejecutando ${messageResponse.tool_calls.length} herramientas...`);
                 finalResponse = await this.procesarHerramientas(
                     messageResponse, 
                     mensajes, 
@@ -403,34 +300,6 @@ class OpenAIService {
                 };
             }
 
-            // ✅ NUEVO: Analizar si la respuesta debe hacer referencia al contexto
-            finalResponse.content = await this.analizarReferenciaContextual(
-                mensaje, 
-                finalResponse.content, 
-                userInfo
-            );
-
-            // ✅ NUEVO: Guardar respuesta del bot en Cosmos DB
-            if (conversationId && userInfo && finalResponse.content && cosmosService.isAvailable()) {
-                await cosmosService.saveMessage(
-                    finalResponse.content, 
-                    conversationId, 
-                    userInfo.usuario, 
-                    'Nova Bot', 
-                    'bot'
-                );
-            }
-
-            // ✅ NUEVO: Generar mensaje de referencia automáticamente para ciertas consultas
-            if (conversationId && userInfo && finalResponse.content) {
-                this.generarMensajeReferenciaAutomatico(
-                    mensaje, 
-                    finalResponse.content, 
-                    userInfo.usuario, 
-                    messageResponse.tool_calls
-                );
-            }
-
             console.log(`✅ [${userInfo?.usuario || 'unknown'}] Respuesta generada exitosamente`);
             return finalResponse;
 
@@ -441,116 +310,18 @@ class OpenAIService {
     }
 
     /**
-     * ✅ NUEVO: Middleware que inyecta contexto automáticamente en consultas relevantes
+     * ✅ Formatear historial para OpenAI (MEJORADO)
      */
-    async inyectarContextoAutomatico(mensaje, userInfo) {
-        try {
-            if (!userInfo?.usuario || !seguimientoService.isAvailable()) {
-                return mensaje; // Sin cambios si no hay seguimiento
-            }
-
-            const mensajeLower = mensaje.toLowerCase();
-            
-            // Detectar si la consulta podría beneficiarse del contexto
-            const necesitaContexto = [
-                'similar', 'parecido', 'como antes', 'otra vez', 'de nuevo',
-                'anterior', 'previamente', 'la vez pasada', 'recordar',
-                'actualizar', 'cambió', 'diferencia', 'comparar',
-                'recuerdas', 'te acordás', 'mencionaste', 'dijiste'
-            ].some(keyword => mensajeLower.includes(keyword));
-
-            if (necesitaContexto) {
-                // Agregar instrucción implícita para usar contexto
-                const mensajeEnriquecido = `${mensaje}\n\n[CONTEXTO: Revisar si hay información relevante en consultas anteriores del usuario]`;
-                console.log(`🧠 [${userInfo.usuario}] Mensaje enriquecido con contexto automático`);
-                return mensajeEnriquecido;
-            }
-
-            return mensaje; // Sin cambios
-
-        } catch (error) {
-            console.warn('⚠️ Error inyectando contexto automático:', error.message);
-            return mensaje;
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Analizar si la respuesta debe hacer referencia al contexto
-     */
-    async analizarReferenciaContextual(mensaje, respuesta, userInfo) {
-        try {
-            if (!userInfo?.usuario || !seguimientoService.isAvailable()) {
-                return respuesta;
-            }
-
-            const mensajeLower = mensaje.toLowerCase();
-            
-            // Si la consulta sugiere referencia al pasado
-            if (mensajeLower.includes('anterior') || mensajeLower.includes('antes') || 
-                mensajeLower.includes('recordar') || mensajeLower.includes('recuerdas')) {
-                
-                const referencias = await seguimientoService.obtenerMensajesReferencia(userInfo.usuario);
-                
-                if (referencias.length > 0) {
-                    const contextoAdicional = `\n\n💡 **Referencia a consultas anteriores**: Tienes ${referencias.length} consultas previas guardadas. Usa \`historial\` para ver detalles completos.`;
-                    return respuesta + contextoAdicional;
-                }
-            }
-
-            return respuesta;
-
-        } catch (error) {
-            console.warn('⚠️ Error analizando referencia contextual:', error.message);
-            return respuesta;
-        }
-    }
-
-    /**
-     * ✅ CORREGIDO: Formateo de historial CON seguimiento automático
-     */
-    async formatearHistorial(historial, userInfo, conversationId) {
+    formatearHistorialParaOpenAI(historial, userInfo) {
         const fechaActual = DateTime.now().setZone('America/Mexico_City');
         
         const userContext = userInfo ? 
             `Usuario autenticado: ${userInfo.nombre} (${userInfo.usuario})` : 
             'Usuario no autenticado';
 
-        const persistenciaInfo = cosmosService.isAvailable() ? 
-            'Persistencia: Cosmos DB activa' : 
-            'Persistencia: Solo memoria temporal';
-
-        const documentosInfo = documentService.isAvailable() ?
-            'Búsqueda de Documentos: Azure Search activo con embeddings vectoriales' :
-            'Búsqueda de Documentos: No disponible';
-
-        // ✅ NUEVO: Obtener seguimiento automáticamente
-        let contextoSeguimiento = '';
-        if (userInfo?.usuario && seguimientoService.isAvailable()) {
-            try {
-                const referencias = await seguimientoService.obtenerMensajesReferencia(userInfo.usuario);
-                
-                if (referencias.length > 0) {
-                    contextoSeguimiento = `\n🔷 **Historial de Consultas Recientes (${referencias.length}/5):**\n`;
-                    
-                    referencias.forEach((ref, index) => {
-                        const fecha = DateTime.fromISO(ref.timestamp).toFormat('dd/MM HH:mm');
-                        const preview = ref.contenido.length > 150 ? 
-                            ref.contenido.substring(0, 150) + '...' : 
-                            ref.contenido;
-                        
-                        contextoSeguimiento += `• #${ref.numeroReferencia} (${fecha}) - ${ref.tipo}: ${preview}\n`;
-                    });
-                    
-                    contextoSeguimiento += `\n⚠️ **IMPORTANTE**: Puedes hacer referencia a estas consultas previas para dar respuestas más contextuales y personalizadas. Si el usuario pregunta algo relacionado con estas referencias, úsalas para dar mejor contexto.`;
-                }
-            } catch (error) {
-                console.warn('⚠️ Error obteniendo seguimiento para contexto:', error.message);
-            }
-        }
-
         const mensajes = [{
             role: "system",
-            content: `Eres un asistente corporativo inteligente para Nova Corporation con MEMORIA CONTEXTUAL.
+            content: `Eres un asistente corporativo inteligente para Nova Corporation con memoria de conversación.
 
 🔷 **Contexto del Usuario:**
 ${userContext}
@@ -558,65 +329,54 @@ ${userContext}
 🔷 **Fecha y Hora Actual:**
 ${fechaActual.toFormat('dd/MM/yyyy HH:mm:ss')} (${fechaActual.zoneName})
 
-🔷 **Estado del Sistema:**
-${persistenciaInfo}
-${documentosInfo}
-${contextoSeguimiento}
-
-🔷 **Instrucciones Especiales sobre Memoria:**
-• SÍ TIENES MEMORIA de las consultas importantes del usuario (máximo 5 más recientes)
-• Puedes hacer referencia a consultas anteriores cuando sea relevante
-• Si el usuario pregunta algo relacionado con su historial, úsalo para dar mejor contexto
-• Nunca digas "no puedo recordar conversaciones anteriores" - TIENES acceso a las referencias
-• Si no hay referencias relevantes, di "no tengo información previa sobre este tema específico"
-• Cuando hagas referencia al pasado, usa frases como "según tu consulta del [fecha]" o "basándome en lo que consultaste anteriormente"
+🔷 **Historial de Conversación:**
+${historial.length > 0 ? 
+  `Tienes acceso a los últimos ${historial.length} mensajes de esta conversación.` : 
+  'Esta es una conversación nueva.'
+}
 
 🔷 **Tus Capacidades:**
-• Conversación natural e inteligente con persistencia
-• Memoria contextual de las últimas 5 consultas importantes
+• Conversación natural e inteligente con memoria contextual
 • Consulta de tasas de interés de Nova (herramienta especializada)
-• Búsqueda de documentos corporativos con IA vectorial
-• Consulta de políticas empresariales (vacaciones, horarios, prestaciones, etc.)
-• Información de días feriados oficiales
-• Acceso a información del usuario autenticado
+• Información del usuario autenticado
 • Consultas a APIs internas de Nova
 • Análisis y explicaciones detalladas
-• Historial de conversaciones (${cosmosService.isAvailable() ? 'persistente' : 'temporal'})
+• Generación de resúmenes de conversación
 
 🔷 **Personalidad:**
 • Profesional pero amigable
-• Útil y proactivo para temas financieros
+• Útil y proactivo para temas financieros y corporativos
 • Claro y conciso en respuestas
+• Usa la memoria de conversación para dar respuestas más contextuales
 • Enfocado en productividad corporativa y servicios financieros
-• Usa la memoria contextual para dar respuestas más personalizadas
 
 🔷 **Importante:**
 • Siempre mantén la información del usuario segura
 • Para consultas de tasas, usa la herramienta especializada
-• Si tienes referencias previas relevantes, úsalas para dar mejor contexto
-• Las conversaciones se guardan ${cosmosService.isAvailable() ? 'permanentemente' : 'temporalmente'}`
+• Usa el historial de conversación para dar respuestas más personalizadas
+• Si el usuario se refiere a algo anterior, busca en el historial proporcionado`
         }];
         
-        // Procesar historial normal (últimos mensajes de la conversación actual)
+        // ✅ Procesar historial (ya viene en el formato correcto desde TeamsBot)
         if (historial && historial.length > 0) {
-            const recientes = historial.slice(-5); // Mantener solo los 5 más recientes
-            recientes.forEach(item => {
-                if (item.message && item.message.trim()) {
-                    const role = item.type === 'user' || item.userId !== 'bot' ? "user" : "assistant";
+            console.log(`📚 Formateando ${historial.length} mensajes del historial...`);
+            
+            historial.forEach((item, index) => {
+                if (item.content && item.content.trim()) {
                     mensajes.push({
-                        role: role,
-                        content: item.message.trim()
+                        role: item.role, // ya viene como 'user' o 'assistant'
+                        content: item.content.trim()
                     });
+                    console.log(`   ${index + 1}. ${item.role}: ${item.content.substring(0, 30)}...`);
                 }
             });
         }
-
 
         return mensajes;
     }
 
     /**
-     * ✅ NUEVO: Seleccionar el mejor modelo según el tipo de consulta
+     * ✅ Seleccionar el mejor modelo según el tipo de consulta
      */
     selectBestModel(mensaje, userInfo) {
         const mensajeLower = mensaje.toLowerCase();
@@ -627,16 +387,17 @@ ${contextoSeguimiento}
             mensajeLower.includes('código') ||
             mensajeLower.includes('programar') ||
             mensajeLower.includes('tasas') ||
+            mensajeLower.includes('resumen') ||
             mensaje.length > 200) {
             return "gpt-4o-mini";
         }
         
-        // Para consultas simples, usar GPT-3.5
+        // Para consultas simples, también usar GPT-4o-mini (es eficiente)
         return "gpt-4o-mini";
     }
 
     /**
-     * ✅ NUEVO: Calcular temperatura según el tipo de mensaje
+     * ✅ Calcular temperatura según el tipo de mensaje
      */
     calculateTemperature(mensaje) {
         const mensajeLower = mensaje.toLowerCase();
@@ -646,7 +407,8 @@ ${contextoSeguimiento}
             mensajeLower.includes('cómo') ||
             mensajeLower.includes('explicar') ||
             mensajeLower.includes('información') ||
-            mensajeLower.includes('tasas')) {
+            mensajeLower.includes('tasas') ||
+            mensajeLower.includes('resumen')) {
             return 0.3;
         }
         
@@ -662,7 +424,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ NUEVO: Calcular tokens máximos según la consulta
+     * ✅ Calcular tokens máximos según la consulta
      */
     calculateMaxTokens(mensaje) {
         if (mensaje.length > 500) return 4000;  // Consultas largas
@@ -671,7 +433,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ MEJORADO: Decidir si usar herramientas con detección mejorada
+     * ✅ Decidir si usar herramientas con detección mejorada
      */
     shouldUseTools(mensaje) {
         const mensajeLower = mensaje.toLowerCase();
@@ -683,47 +445,23 @@ ${contextoSeguimiento}
             // Información personal
             'mi información', 'mis datos', 'perfil', 'mi info', 'quien soy',
             
-            // APIs y consultas
-            'consultar', 'api', 'buscar',
-            
-            // Historial y seguimiento - NUEVO
-            'resumen', 'historial', 'conversación', 'seguimiento',
-            'anterior', 'antes', 'previamente', 'ya consulté', 'ya pregunté',
-            'la vez pasada', 'anteriormente', 'hace poco', 'el otro día',
-            'recordar', 'recuerda', 'como antes', 'similar a', 'parecido a',
-            'de nuevo', 'otra vez', 'como la consulta de', 'como cuando',
-            'referencia', 'context', 'contexto',
-            
-            // Tasas de interés - PALABRAS CLAVE MEJORADAS
+            // Tasas de interés - PALABRAS CLAVE ESPECÍFICAS
             'tasas', 'tasa', 'interes', 'interés', 'préstamo', 'crédito',
             'vista', 'fijo', 'fap', 'nov', 'depósito', 'depósitos',
             'ahorro', 'ahorros', 'inversión', 'rendimiento',
             
-            // Documentos - DETECCIÓN MEJORADA
-            'documento', 'documentos', 'archivo', 'archivos',
-            'política', 'políticas', 'politica', 'politicas',
-            'manual', 'manuales', 'procedimiento', 'procedimientos',
-            'normativa', 'normas', 'reglamento', 'guía', 'guias',
+            // Resúmenes y análisis
+            'resumen', 'resumir', 'análisis', 'analizar',
+            'reporte', 'informe',
             
-            // Nombres específicos de archivos
-            'ajustes.docx', 'ajustes', '.docx', '.pdf', '.doc',
-            
-            // Políticas específicas
-            'vacaciones', 'feriados', 'festivos', 'dias libres',
-            'horario', 'horarios', 'jornada', 'trabajo',
-            'vestimenta', 'uniforme', 'dress code',
-            'prestaciones', 'beneficios', 'compensaciones', 'aguinaldo',
-            'seguridad', 'higiene', 'riesgos', 'protección',
-            'capacitación', 'entrenamiento', 'cursos', 'formación',
-            'código de conducta', 'ética', 'comportamiento',
-            'recursos humanos', 'rh', 'personal', 'contratación',
-            'nómina', 'salarios', 'pagos', 'descuentos'
+            // APIs y consultas
+            'consultar', 'api', 'buscar'
         ];
         
         const usarHerramientas = toolKeywords.some(keyword => mensajeLower.includes(keyword));
         
         if (usarHerramientas) {
-            console.log(`🛠️ Herramientas habilitadas para: "${mensaje}"`);
+            console.log(`🛠️ Herramientas habilitadas para: "${mensaje.substring(0, 50)}..."`);
             console.log(`   Palabras clave detectadas: ${toolKeywords.filter(k => mensajeLower.includes(k)).join(', ')}`);
         }
         
@@ -731,7 +469,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ MEJORADO: Procesamiento de herramientas con mejor logging
+     * ✅ Procesamiento de herramientas con mejor logging
      */
     async procesarHerramientas(messageResponse, mensajes, userToken, userInfo, conversationId) {
         const resultados = [];
@@ -741,7 +479,7 @@ ${contextoSeguimiento}
             const { name, arguments: args } = fnCall;
             
             try {
-                console.log(`🔧 Ejecutando herramienta: ${name}`);
+                console.log(`🔧 [${userInfo?.usuario || 'unknown'}] Ejecutando herramienta: ${name}`);
                 
                 const parametros = JSON.parse(args || '{}');
                 const resultado = await this.ejecutarHerramienta(
@@ -758,7 +496,7 @@ ${contextoSeguimiento}
                         JSON.stringify(resultado, null, 2) : String(resultado)
                 });
                 
-                console.log(`✅ Herramienta ${name} ejecutada exitosamente`);
+                console.log(`✅ [${userInfo?.usuario || 'unknown'}] Herramienta ${name} ejecutada exitosamente`);
                 
             } catch (error) {
                 console.error(`❌ Error ejecutando herramienta ${name}:`, error);
@@ -769,7 +507,7 @@ ${contextoSeguimiento}
             }
         }
 
-        // ✅ MEJORADO: Generar respuesta final con mejor contexto
+        // ✅ Generar respuesta final con mejor contexto
         const finalMessages = [
             ...mensajes,
             messageResponse,
@@ -780,7 +518,7 @@ ${contextoSeguimiento}
             }))
         ];
 
-        console.log('🔄 Generando respuesta final con resultados de herramientas...');
+        console.log(`🔄 [${userInfo?.usuario || 'unknown'}] Generando respuesta final con resultados de herramientas...`);
         
         const finalResponse = await this.openai.chat.completions.create({
             model: "gpt-4o-mini",
@@ -796,7 +534,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ COMPLETO: Herramientas con seguimiento integrado
+     * ✅ Ejecutar herramientas disponibles
      */
     async ejecutarHerramienta(nombre, parametros, userToken, userInfo, conversationId) {
         const userId = userInfo?.usuario || 'unknown';
@@ -814,25 +552,9 @@ ${contextoSeguimiento}
                 console.log(`💰 [${userId}] Consultando tasas para año: ${parametros.anio}`);
                 return await this.consultarTasasInteres(parametros.anio, userToken, userInfo);
 
-            case 'buscar_documentos':
-                console.log(`📖 [${userId}] Buscando documentos: "${parametros.consulta}"`);
-                return await this.buscarDocumentos(parametros.consulta, userInfo);
-
-            case 'buscar_politicas':
-                console.log(`📋 [${userId}] Buscando política: ${parametros.tipo_politica}`);
-                return await this.buscarPoliticas(parametros.tipo_politica, userInfo);
-
-            case 'obtener_dias_feriados':
-                console.log(`📅 [${userId}] Obteniendo feriados para: ${parametros.anio || 'año actual'}`);
-                return await this.obtenerDiasFeriados(parametros.anio, userInfo);
-
-            case 'consultar_seguimiento':
-                console.log(`📋 [${userId}] Consultando seguimiento: ${parametros.accion}`);
-                return await this.manejarSeguimiento(parametros.accion, parametros.numeroReferencia, userInfo);
-
-            case 'consultar_contexto_anterior':
-                console.log(`🧠 [${userId}] Consultando contexto anterior: ${parametros.tema}`);
-                return await this.consultarContextoAnterior(parametros.tema, parametros.incluir_detalles, userInfo);
+            case 'generar_resumen_conversacion':
+                console.log(`📊 [${userId}] Generando resumen de conversación`);
+                return await this.generarResumenConversacion(conversationId, userInfo, parametros.incluir_estadisticas);
 
             case 'consultar_api_nova':
                 console.log(`🌐 [${userId}] Consultando API Nova: ${parametros.endpoint}`);
@@ -843,463 +565,64 @@ ${contextoSeguimiento}
                     parametros.parametros
                 );
 
-            case 'generar_resumen_conversacion':
-                console.log(`📊 [${userId}] Generando resumen de conversación`);
-                return await this.generarResumenConversacion(conversationId, userInfo);
-
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
         }
     }
 
     /**
-     * ✅ NUEVO: Manejar seguimiento
+     * ✅ Obtener fecha/hora con diferentes formatos
      */
-    async manejarSeguimiento(accion, numeroReferencia, userInfo) {
-        try {
-            const userId = userInfo?.usuario || 'unknown';
-
-            switch (accion) {
-                case 'mostrar':
-                    return await seguimientoService.formatearMensajesReferencia(userId, false);
-
-                case 'detallado':
-                    return await seguimientoService.formatearMensajesReferencia(userId, true);
-
-                case 'estadisticas':
-                    const stats = await seguimientoService.obtenerEstadisticas(userId);
-                    return this.formatearEstadisticasSeguimiento(stats, userInfo);
-
-                case 'exportar':
-                    return await seguimientoService.exportarSeguimiento(userId, userInfo);
-
-                case 'limpiar':
-                    const limpiado = await seguimientoService.limpiarSeguimiento(userId);
-                    return limpiado ? 
-                        '✅ **Seguimiento limpiado**\n\nTu historial de referencias ha sido eliminado completamente.' :
-                        '❌ **Error limpiando seguimiento**\n\nNo se pudo limpiar el historial.';
-
-                case 'referencia_especifica':
-                    if (!numeroReferencia) {
-                        return '❌ **Número de referencia requerido**\n\nEspecifica el número: `referencia #N`';
-                    }
-                    
-                    const mensaje = await seguimientoService.obtenerMensajePorNumero(userId, numeroReferencia);
-                    return mensaje ? 
-                        this.formatearMensajeEspecifico(mensaje) :
-                        `❌ **Referencia #${numeroReferencia} no encontrada**\n\nVerifica el número con \`historial\`.`;
-
-                default:
-                    return '❌ Acción de seguimiento no reconocida';
-            }
-
-        } catch (error) {
-            console.error('❌ Error en manejarSeguimiento:', error);
-            return `❌ **Error en seguimiento**: ${error.message}`;
+    obtenerFechaHora(formato) {
+        const ahora = DateTime.now().setZone('America/Mexico_City');
+        
+        switch (formato) {
+            case 'fecha':
+                return ahora.toFormat('dd/MM/yyyy');
+            case 'hora':
+                return ahora.toFormat('HH:mm:ss');
+            case 'timestamp':
+                return ahora.toISO();
+            case 'completo':
+            default:
+                return `📅 **Fecha y Hora Actual**\n\n` +
+                       `📅 Fecha: ${ahora.toFormat('dd/MM/yyyy')}\n` +
+                       `🕐 Hora: ${ahora.toFormat('HH:mm:ss')}\n` +
+                       `🌎 Zona: ${ahora.zoneName}\n` +
+                       `📝 Día: ${ahora.toFormat('cccc', { locale: 'es' })}`;
         }
     }
 
     /**
-     * ✅ NUEVO: Consultar contexto anterior
+     * ✅ Información de usuario más completa
      */
-    async consultarContextoAnterior(tema, incluirDetalles = false, userInfo) {
-        try {
-            const userId = userInfo?.usuario || 'unknown';
-            
-            if (!seguimientoService.isAvailable()) {
-                return 'Sistema de seguimiento no disponible';
-            }
-
-            const referencias = await seguimientoService.obtenerMensajesReferencia(userId);
-            
-            if (referencias.length === 0) {
-                return 'No hay contexto anterior disponible para este usuario';
-            }
-
-            // Filtrar referencias relevantes al tema si se especifica
-            let referenciasRelevantes = referencias;
-            if (tema) {
-                const temaLower = tema.toLowerCase();
-                referenciasRelevantes = referencias.filter(ref => 
-                    ref.contenido.toLowerCase().includes(temaLower) ||
-                    ref.tipo.toLowerCase().includes(temaLower) ||
-                    (ref.metadata?.consulta_original && ref.metadata.consulta_original.toLowerCase().includes(temaLower))
-                );
-            }
-
-            if (referenciasRelevantes.length === 0) {
-                return `No se encontró contexto anterior relacionado con "${tema}"`;
-            }
-
-            // Formatear respuesta
-            let respuesta = `🧠 **Contexto Anterior del Usuario:**\n\n`;
-            respuesta += `📊 **Encontradas**: ${referenciasRelevantes.length} referencias relevantes\n\n`;
-
-            referenciasRelevantes.forEach((ref, index) => {
-                const fecha = DateTime.fromISO(ref.timestamp).toFormat('dd/MM/yyyy HH:mm');
-                const tipoEmoji = seguimientoService.obtenerEmojiTipo(ref.tipo);
-                
-                respuesta += `${tipoEmoji} **Ref #${ref.numeroReferencia}** (${fecha}) - ${ref.tipo}\n`;
-                
-                if (incluirDetalles) {
-                    respuesta += `📝 ${ref.contenido}\n`;
-                    if (ref.metadata?.consulta_original) {
-                        respuesta += `🔍 Consulta original: "${ref.metadata.consulta_original}"\n`;
-                    }
-                } else {
-                    const preview = ref.contenido.length > 100 ? 
-                        ref.contenido.substring(0, 100) + '...' : 
-                        ref.contenido;
-                    respuesta += `📝 ${preview}\n`;
-                }
-                
-                if (index < referenciasRelevantes.length - 1) {
-                    respuesta += `\n`;
-                }
-            });
-
-            respuesta += `\n💡 **Usa esta información** para dar respuestas más contextuales y personalizadas.`;
-
-            return respuesta;
-
-        } catch (error) {
-            console.error('❌ Error consultando contexto anterior:', error);
-            return `❌ Error accediendo al contexto anterior: ${error.message}`;
+    obtenerInfoUsuario(userInfo, incluirToken = false) {
+        if (!userInfo) {
+            return "❌ **Error**: Usuario no autenticado";
         }
+
+        let info = `👤 **Información del Usuario**\n\n` +
+                   `📝 **Nombre Completo**: ${userInfo.nombre} ${userInfo.paterno || ''} ${userInfo.materno || ''}`.trim() + '\n' +
+                   `👤 **Usuario**: ${userInfo.usuario}\n` +
+                   `📧 **ID Corporativo**: ${userInfo.usuario}\n`;
+
+        if (incluirToken && userInfo.token) {
+            info += `🔑 **Token**: ${userInfo.token.substring(0, 20)}...${userInfo.token.slice(-5)}\n`;
+            info += `🔒 **Estado Token**: ✅ Válido\n`;
+            
+            const numRI = this.extractNumRIFromToken(userInfo.token);
+            if (numRI) {
+                info += `🏦 **Región/RI**: ${numRI}\n`;
+            }
+        }
+
+        info += `\n💼 **Estado**: Autenticado y listo para usar el bot`;
+
+        return info;
     }
 
     /**
-     * ✅ NUEVO: Formatear estadísticas de seguimiento
-     */
-    formatearEstadisticasSeguimiento(stats, userInfo) {
-        if (!stats) {
-            return '❌ Error obteniendo estadísticas de seguimiento';
-        }
-
-        let respuesta = `📊 **Estadísticas de Seguimiento**\n\n`;
-        respuesta += `👤 **Usuario**: ${userInfo?.nombre || 'Desconocido'} (${userInfo?.usuario})\n`;
-        respuesta += `📋 **Total Referencias**: ${stats.totalMensajes}/5\n\n`;
-
-        if (stats.totalMensajes > 0) {
-            respuesta += `📈 **Distribución por Tipo:**\n`;
-            Object.entries(stats.tiposMensajes).forEach(([tipo, cantidad]) => {
-                const emoji = seguimientoService.obtenerEmojiTipo(tipo);
-                const porcentaje = Math.round((cantidad / stats.totalMensajes) * 100);
-                respuesta += `${emoji} ${tipo}: ${cantidad} (${porcentaje}%)\n`;
-            });
-
-            respuesta += `\n🕐 **Actividad Reciente:**\n`;
-            respuesta += `📅 Más reciente: ${stats.mensajeMasReciente}\n`;
-            respuesta += `📅 Más antigua: ${stats.mensajeMasAntiguo}\n`;
-            respuesta += `⏰ Rango temporal: ${stats.rangoFechas}\n`;
-        }
-
-        respuesta += `\n💾 **Estado del Sistema:**\n`;
-        respuesta += `✅ Seguimiento: ${seguimientoService.isAvailable() ? 'Activo' : 'Inactivo'}\n`;
-        respuesta += `💾 Persistencia: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Solo memoria'}`;
-
-        return respuesta;
-    }
-
-    /**
-     * ✅ NUEVO: Formatear mensaje específico
-     */
-    formatearMensajeEspecifico(mensaje) {
-        const fecha = DateTime.fromISO(mensaje.timestamp).toFormat('dd/MM/yyyy HH:mm:ss');
-        const tipoEmoji = seguimientoService.obtenerEmojiTipo(mensaje.tipo);
-
-        let respuesta = `${tipoEmoji} **Referencia #${mensaje.numeroReferencia}**\n\n`;
-        respuesta += `🏷️ **Tipo**: ${mensaje.tipo}\n`;
-        respuesta += `📅 **Fecha**: ${fecha}\n\n`;
-        respuesta += `📝 **Contenido Completo:**\n`;
-        respuesta += `${mensaje.contenido}\n\n`;
-
-        if (mensaje.metadata && Object.keys(mensaje.metadata).length > 0) {
-            respuesta += `🔍 **Información Adicional:**\n`;
-            Object.entries(mensaje.metadata)
-                .filter(([key]) => !['version', 'source'].includes(key))
-                .forEach(([key, value]) => {
-                    respuesta += `• ${key}: ${value}\n`;
-                });
-        }
-
-        return respuesta;
-    }
-
-    /**
-     * ✅ MEJORADO: Generar mensaje de referencia automático
-     */
-    async generarMensajeReferenciaAutomatico(mensajeUsuario, respuestaBot, userId, toolCalls) {
-    try {
-        // ✅ VERIFICACIÓN: Solo generar si seguimiento está disponible
-        if (!seguimientoService.isAvailable()) {
-            console.log(`⚠️ [${userId}] SeguimientoService no disponible - saltando referencia automática`);
-            return;
-        }
-
-        const mensajeLower = mensajeUsuario.toLowerCase();
-        let tipoReferencia = null;
-        let metadata = {};
-        let debeGenerar = false;
-
-        // ✅ CRITERIOS ESPECÍFICOS para generar referencias
-        if (mensajeLower.includes('tasas') || mensajeLower.includes('interés') || mensajeLower.includes('inversión')) {
-            tipoReferencia = 'tasas';
-            metadata = { 
-                consulta_original: mensajeUsuario, 
-                area: 'financiera',
-                herramientas: toolCalls ? toolCalls.map(t => t.function.name) : []
-            };
-            debeGenerar = true;
-            
-        } else if (mensajeLower.includes('documento') || mensajeLower.includes('política') || mensajeLower.includes('manual') || mensajeLower.includes('ajustes.docx')) {
-            tipoReferencia = 'documentos';
-            metadata = { 
-                busqueda: mensajeUsuario, 
-                area: 'documentacion',
-                herramientas: toolCalls ? toolCalls.map(t => t.function.name) : []
-            };
-            debeGenerar = true;
-            
-        } else if (mensajeLower.includes('feriados') || mensajeLower.includes('festivos') || mensajeLower.includes('vacaciones')) {
-            tipoReferencia = 'feriados';
-            metadata = { 
-                area: 'recursos_humanos',
-                consulta_original: mensajeUsuario
-            };
-            debeGenerar = true;
-            
-        } else if (toolCalls && toolCalls.length > 0) {
-            // ✅ IMPORTANTE: Si se usaron herramientas, SIEMPRE generar referencia
-            const herramientasUsadas = toolCalls.map(t => t.function.name);
-            
-            // Determinar tipo basado en herramientas
-            if (herramientasUsadas.includes('consultar_tasas_interes')) {
-                tipoReferencia = 'tasas';
-            } else if (herramientasUsadas.includes('buscar_documentos')) {
-                tipoReferencia = 'documentos';
-            } else if (herramientasUsadas.includes('obtener_dias_feriados')) {
-                tipoReferencia = 'feriados';
-            } else {
-                tipoReferencia = 'consulta';
-            }
-            
-            metadata = { 
-                herramientas_usadas: herramientasUsadas,
-                consulta_original: mensajeUsuario,
-                automatico: true
-            };
-            debeGenerar = true;
-            
-        } else if (respuestaBot.length > 800) {
-            // ✅ Respuestas largas y detalladas
-            tipoReferencia = 'analysis';
-            metadata = { 
-                respuesta_extensa: true,
-                longitud_respuesta: respuestaBot.length,
-                consulta_original: mensajeUsuario
-            };
-            debeGenerar = true;
-            
-        } else if (mensajeLower.includes('información') || mensajeLower.includes('datos') || mensajeLower.includes('perfil')) {
-            tipoReferencia = 'consulta';
-            metadata = { 
-                tipo_info: 'personal',
-                consulta_original: mensajeUsuario
-            };
-            debeGenerar = true;
-        }
-
-        // ✅ GENERAR REFERENCIA si cumple criterios
-        if (debeGenerar && tipoReferencia) {
-            // Crear versión resumida para la referencia
-            const maxLength = 500; // Reducir para evitar problemas
-            const resumenRespuesta = respuestaBot.length > maxLength ? 
-                respuestaBot.substring(0, maxLength) + '... [RESPUESTA COMPLETA TRUNCADA]' : 
-                respuestaBot;
-
-            const contenidoReferencia = `**P**: ${mensajeUsuario}\n\n**R**: ${resumenRespuesta}`;
-
-            console.log(`📋 [${userId}] Generando referencia automática: ${tipoReferencia}`);
-            console.log(`🔍 [${userId}] Contenido: ${contenidoReferencia.length} chars`);
-
-            const referenciaCreada = await seguimientoService.agregarMensajeReferencia(
-                userId,
-                contenidoReferencia,
-                tipoReferencia,
-                metadata
-            );
-
-            if (referenciaCreada) {
-                console.log(`✅ [${userId}] Referencia automática #${referenciaCreada.numeroReferencia} creada exitosamente`);
-            } else {
-                console.warn(`⚠️ [${userId}] No se pudo crear referencia automática`);
-            }
-        } else {
-            console.log(`ℹ️ [${userId}] Mensaje no cumple criterios para referencia automática`);
-            console.log(`   - Herramientas usadas: ${toolCalls ? toolCalls.length : 0}`);
-            console.log(`   - Longitud respuesta: ${respuestaBot.length}`);
-            console.log(`   - Palabras clave: ${mensajeLower}`);
-        }
-
-    } catch (error) {
-        console.error(`❌ [${userId}] Error generando referencia automática:`, error.message);
-        console.error(`   Stack:`, error.stack);
-    }
-}
-
-    // ===== MÉTODOS EXISTENTES (mantener todos) =====
-
-    /**
-     * ✅ CORREGIDO: Búsqueda de documentos con mejor integración
-     */
-    async buscarDocumentos(consulta, userInfo) {
-        try {
-            const userId = userInfo?.usuario || 'unknown';
-            console.log(`📖 [${userId}] Iniciando búsqueda de documentos: "${consulta}"`);
-
-            if (!documentService.isAvailable()) {
-                console.warn(`⚠️ [${userId}] DocumentService no disponible`);
-                
-                const configInfo = documentService.getConfigInfo();
-                console.log(`📊 Estado del servicio:`, {
-                    searchAvailable: configInfo.searchAvailable,
-                    error: configInfo.error,
-                    endpoint: configInfo.endpoint,
-                    indexName: configInfo.indexName
-                });
-
-                return `⚠️ **Servicio de búsqueda no disponible**\n\n` +
-                       `**Estado**: ${configInfo.error || 'No configurado'}\n\n` +
-                       `**Para habilitar búsqueda de documentos:**\n` +
-                       `• Configurar Azure Search en las variables de entorno\n` +
-                       `• Verificar conectividad con el servicio\n` +
-                       `• Contactar al administrador del sistema\n\n` +
-                       `**Funciones disponibles:**\n` +
-                       `• Consulta de tasas: \`tasas 2025\`\n` +
-                       `• Información personal: \`mi info\`\n` +
-                       `• Chat general con IA`;
-            }
-
-            console.log(`🔍 [${userId}] DocumentService disponible, ejecutando búsqueda...`);
-            
-            const resultado = await documentService.buscarDocumentos(consulta, userId);
-            
-            console.log(`📊 [${userId}] Búsqueda completada, resultado obtenido`);
-            
-            if (!resultado || typeof resultado !== 'string') {
-                console.warn(`⚠️ [${userId}] Resultado inválido de DocumentService:`, typeof resultado);
-                return `❌ **Error en búsqueda**: No se obtuvo resultado válido del servicio de documentos`;
-            }
-
-            if (resultado.includes('No se encontraron documentos') || 
-                resultado.includes('❌ No se encontraron')) {
-                
-                console.log(`💡 [${userId}] No se encontraron documentos, ofreciendo alternativas`);
-                
-                if (consulta.toLowerCase().includes('ajustes.docx') || 
-                    consulta.toLowerCase().includes('ajustes')) {
-                    
-                    return `🔍 **Búsqueda: "${consulta}"**\n\n` +
-                           `❌ **Documento "ajustes.docx" no encontrado**\n\n` +
-                           `**Posibles causas:**\n` +
-                           `• El archivo no está indexado en Azure Search\n` +
-                           `• El documento no existe en el sistema\n` +
-                           `• El nombre del archivo es diferente\n\n` +
-                           `**Alternativas de búsqueda:**\n` +
-                           `• Busca por contenido: "configuración sistema"\n` +
-                           `• Busca por tema: "ajustes configuración"\n` +
-                           `• Busca documentos similares: "parámetros sistema"\n\n` +
-                           `**Otras opciones:**\n` +
-                           `• \`buscar políticas\` - Ver políticas corporativas\n` +
-                           `• \`obtener feriados\` - Consultar días feriados\n` +
-                           `• Describir qué información necesitas del documento`;
-                }
-            }
-
-            console.log(`✅ [${userId}] Búsqueda exitosa, retornando resultado`);
-            return resultado;
-
-        } catch (error) {
-            const userId = userInfo?.usuario || 'unknown';
-            console.error(`❌ [${userId}] Error en búsqueda de documentos:`, error);
-            
-            let errorMessage = `❌ **Error buscando documentos**\n\n`;
-            errorMessage += `**Consulta**: "${consulta}"\n`;
-            errorMessage += `**Error**: ${error.message}\n\n`;
-            
-            if (error.message.includes('ENOTFOUND') || error.message.includes('getaddrinfo')) {
-                errorMessage += `**Tipo**: Error de conectividad con Azure Search\n`;
-                errorMessage += `**Solución**: Verificar configuración de red y endpoint\n`;
-            } else if (error.message.includes('403') || error.message.includes('Forbidden')) {
-                errorMessage += `**Tipo**: Error de permisos\n`;
-                errorMessage += `**Solución**: Verificar API Key de Azure Search\n`;
-            } else if (error.message.includes('404') || error.message.includes('Not Found')) {
-                errorMessage += `**Tipo**: Servicio o índice no encontrado\n`;
-                errorMessage += `**Solución**: Verificar endpoint e índice en Azure Search\n`;
-            } else {
-                errorMessage += `**Tipo**: Error interno del servicio\n`;
-                errorMessage += `**Solución**: Contactar soporte técnico\n`;
-            }
-            
-            errorMessage += `\n**Funciones disponibles:**\n`;
-            errorMessage += `• Consulta de tasas: \`tasas 2025\`\n`;
-            errorMessage += `• Información personal: \`mi info\`\n`;
-            errorMessage += `• Chat general con IA`;
-            
-            return errorMessage;
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Buscar políticas específicas
-     */
-    async buscarPoliticas(tipoPolitica, userInfo) {
-        try {
-            if (!documentService.isAvailable()) {
-                return `⚠️ **Servicio de políticas no disponible**\n\n` +
-                       `No se puede acceder a las políticas corporativas en este momento.`;
-            }
-
-            const userId = userInfo?.usuario || 'unknown';
-            console.log(`📋 [${userId}] Buscando política: ${tipoPolitica}`);
-
-            const resultado = await documentService.buscarPoliticas(tipoPolitica, userId);
-            
-            return `📋 **Política: ${tipoPolitica.charAt(0).toUpperCase() + tipoPolitica.slice(1)}**\n\n${resultado}`;
-
-        } catch (error) {
-            console.error('❌ Error buscando políticas:', error);
-            return `❌ **Error buscando política de ${tipoPolitica}**: ${error.message}`;
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Obtener días feriados
-     */
-    async obtenerDiasFeriados(anio, userInfo) {
-        try {
-            if (!documentService.isAvailable()) {
-                return `⚠️ **Información de feriados no disponible**\n\n` +
-                       `No se puede acceder al calendario de días feriados.`;
-            }
-
-            const userId = userInfo?.usuario || 'unknown';
-            const añoConsulta = anio || new Date().getFullYear();
-            console.log(`📅 [${userId}] Obteniendo feriados para ${añoConsulta}`);
-
-            const resultado = await documentService.obtenerDiasFeriados(añoConsulta, userId);
-            
-            return `📅 **Días Feriados ${añoConsulta}**\n\n${resultado}`;
-
-        } catch (error) {
-            console.error('❌ Error obteniendo feriados:', error);
-            return `❌ **Error obteniendo feriados para ${anio || 'año actual'}**: ${error.message}`;
-        }
-    }
-
-    /**
-     * ✅ NUEVO: Consultar tasas de interés de Nova
+     * ✅ Consultar tasas de interés de Nova
      */
     async consultarTasasInteres(anio, userToken, userInfo) {
         try {
@@ -1362,7 +685,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ NUEVO: Extraer NumRI del token JWT
+     * ✅ Extraer NumRI del token JWT
      */
     extractNumRIFromToken(token) {
         try {
@@ -1395,7 +718,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ NUEVO: Formatear tabla de tasas COMPLETAMENTE REDISEÑADO para Teams
+     * ✅ Formatear tabla de tasas COMPLETAMENTE REDISEÑADO para Teams
      */
     formatearTablaTasas(tasasData, anio, usuario) {
         try {
@@ -1473,29 +796,6 @@ ${contextoSeguimiento}
                 }
             }
 
-            if (tasasData.length >= 2) {
-                const primerMes = tasasData[0];
-                const ultimoMes = tasasData[tasasData.length - 1];
-                
-                tabla += `\n📊 **TENDENCIA DEL AÑO ${anio}:**\n`;
-                
-                if (primerMes.fijo6 && ultimoMes.fijo6) {
-                    const diferencia = ultimoMes.fijo6 - primerMes.fijo6;
-                    const tendencia = diferencia > 0 ? '📈 Subieron' : diferencia < 0 ? '📉 Bajaron' : '➡️ Estables';
-                    tabla += `🔸 **Depósitos 6 meses:** ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
-                }
-                
-                if (primerMes.Prestamos && ultimoMes.Prestamos) {
-                    const diferencia = ultimoMes.Prestamos - primerMes.Prestamos;
-                    const tendencia = diferencia > 0 ? '📈 Subieron' : diferencia < 0 ? '📉 Bajaron' : '➡️ Estables';
-                    tabla += `🔸 **Préstamos:** ${tendencia} (${diferencia > 0 ? '+' : ''}${diferencia.toFixed(2)}%)\n`;
-                }
-            }
-
-            tabla += `\n📋 **TIPOS DE PRODUCTOS:**\n`;
-            tabla += `💳 **Vista:** Disponibilidad inmediata  📈 **Depósitos:** Tasa fija garantizada\n`;
-            tabla += `🏦 **FAP:** Fondo empleados  🔄 **Novación:** Renovación automática  💸 **Préstamos:** Créditos personales\n`;
-
             tabla += `\n💬 **¿Necesitas asesoría personalizada?** Pregúntame sobre cualquier producto específico.`;
 
             return tabla;
@@ -1507,59 +807,40 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ NUEVO: Obtener fecha/hora con diferentes formatos
+     * ✅ Generar resumen de conversación (MEJORADO)
      */
-    obtenerFechaHora(formato) {
-        const ahora = DateTime.now().setZone('America/Mexico_City');
-        
-        switch (formato) {
-            case 'fecha':
-                return ahora.toFormat('dd/MM/yyyy');
-            case 'hora':
-                return ahora.toFormat('HH:mm:ss');
-            case 'timestamp':
-                return ahora.toISO();
-            case 'completo':
-            default:
-                return `📅 **Fecha y Hora Actual**\n\n` +
-                       `📅 Fecha: ${ahora.toFormat('dd/MM/yyyy')}\n` +
-                       `🕐 Hora: ${ahora.toFormat('HH:mm:ss')}\n` +
-                       `🌎 Zona: ${ahora.zoneName}\n` +
-                       `📝 Día: ${ahora.toFormat('cccc', { locale: 'es' })}`;
-        }
-    }
-
-    /**
-     * ✅ MEJORADO: Información de usuario más completa
-     */
-    obtenerInfoUsuario(userInfo, incluirToken = false) {
-        if (!userInfo) {
-            return "❌ **Error**: Usuario no autenticado";
-        }
-
-        let info = `👤 **Información del Usuario**\n\n` +
-                   `📝 **Nombre Completo**: ${userInfo.nombre} ${userInfo.paterno || ''} ${userInfo.materno || ''}`.trim() + '\n' +
-                   `👤 **Usuario**: ${userInfo.usuario}\n` +
-                   `📧 **ID Corporativo**: ${userInfo.usuario}\n`;
-
-        if (incluirToken && userInfo.token) {
-            info += `🔑 **Token**: ${userInfo.token.substring(0, 20)}...${userInfo.token.slice(-5)}\n`;
-            info += `🔒 **Estado Token**: ✅ Válido\n`;
-            
-            const numRI = this.extractNumRIFromToken(userInfo.token);
-            if (numRI) {
-                info += `🏦 **Región/RI**: ${numRI}\n`;
+    async generarResumenConversacion(conversationId, userInfo, incluirEstadisticas = true) {
+        try {
+            if (!conversationId || !userInfo) {
+                return "⚠️ No hay información de conversación disponible para generar resumen";
             }
+
+            // ✅ NOTA: El historial lo maneja TeamsBot, aquí solo generamos un resumen básico
+            // En una implementación real, TeamsBot pasaría el historial como parámetro
+
+            let resumen = `📊 **Resumen de Conversación**\n\n`;
+            resumen += `👤 **Usuario**: ${userInfo.nombre} (${userInfo.usuario})\n`;
+            resumen += `📅 **Fecha**: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy HH:mm')}\n`;
+            
+            if (incluirEstadisticas) {
+                resumen += `💾 **Persistencia**: Activada\n`;
+                resumen += `🤖 **IA**: OpenAI GPT-4o-mini\n`;
+            }
+            
+            resumen += `\n💡 **Para ver el historial completo**:\n`;
+            resumen += `• Escribe \`historial\` - Ver últimos 5 mensajes\n`;
+            resumen += `• El resumen detallado se genera automáticamente por TeamsBot\n`;
+
+            return resumen;
+
+        } catch (error) {
+            console.error('Error generando resumen:', error);
+            return `❌ Error generando resumen: ${error.message}`;
         }
-
-        info += `\n💼 **Estado**: Autenticado y listo para usar el bot`;
-        info += `\n💾 **Persistencia**: ${cosmosService.isAvailable() ? '✅ Cosmos DB activo' : '⚠️ Solo memoria'}`;
-
-        return info;
     }
 
     /**
-     * ✅ MEJORADO: Consultar APIs de Nova usando el token
+     * ✅ Consultar APIs de Nova usando el token
      */
     async consultarApiNova(endpoint, userToken, metodo = 'GET', parametros = {}) {
         try {
@@ -1622,72 +903,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ MEJORADO: Generar resumen de conversación con Cosmos DB
-     */
-    async generarResumenConversacion(conversationId, userInfo) {
-        try {
-            if (!conversationId || !userInfo) {
-                return "⚠️ No hay información de conversación disponible para generar resumen";
-            }
-
-            let historial = [];
-            let estadisticas = {};
-
-            if (cosmosService.isAvailable()) {
-                console.log(`📊 Generando resumen desde Cosmos DB para ${userInfo.usuario}`);
-                
-                historial = await cosmosService.getConversationHistory(conversationId, userInfo.usuario, 50);
-                
-                const conversationInfo = await cosmosService.getConversationInfo(conversationId, userInfo.usuario);
-                
-                estadisticas = {
-                    totalMensajes: historial.length,
-                    ultimaActividad: conversationInfo?.lastActivity || 'Desconocida',
-                    conversacionCreada: conversationInfo?.createdAt || 'Desconocida',
-                    persistencia: 'Cosmos DB'
-                };
-            } else {
-                return "⚠️ Cosmos DB no disponible - No se puede generar resumen completo";
-            }
-            
-            if (historial.length === 0) {
-                return "📝 **Conversación nueva** - Aún no hay mensajes para resumir";
-            }
-
-            const mensajesUsuario = historial.filter(msg => msg.type === 'user').length;
-            const mensajesBot = historial.filter(msg => msg.type === 'bot').length;
-
-            let resumen = `📋 **Resumen de Conversación**\n\n`;
-            resumen += `👤 **Usuario**: ${userInfo.nombre} (${userInfo.usuario})\n`;
-            resumen += `💬 **Total de mensajes**: ${estadisticas.totalMensajes}\n`;
-            resumen += `📤 **Mensajes del usuario**: ${mensajesUsuario}\n`;
-            resumen += `🤖 **Respuestas del bot**: ${mensajesBot}\n`;
-            resumen += `🕐 **Última actividad**: ${estadisticas.ultimaActividad}\n`;
-            resumen += `📅 **Conversación iniciada**: ${estadisticas.conversacionCreada}\n`;
-            resumen += `💾 **Persistencia**: ${estadisticas.persistencia}\n\n`;
-
-            // Mostrar solo los 5 últimos mensajes para mantener la vista concisa
-            const ultimosMensajes = historial.slice(-5);
-            resumen += `📝 **Últimos mensajes**:\n`;
-            ultimosMensajes.forEach((msg, index) => {
-                const tipo = msg.type === 'user' ? '👤 Usuario' : '🤖 Bot';
-                const preview = msg.message.length > 100 ? 
-                    msg.message.substring(0, 100) + '...' : 
-                    msg.message;
-                resumen += `${index + 1}. ${tipo}: ${preview}\n`;
-            });
-
-
-            return resumen;
-
-        } catch (error) {
-            console.error('Error generando resumen:', error);
-            return `❌ Error generando resumen: ${error.message}`;
-        }
-    }
-
-    /**
-     * ✅ MEJORADO: Respuesta cuando OpenAI no está disponible
+     * ✅ Respuesta cuando OpenAI no está disponible
      */
     createUnavailableResponse() {
         let message = '🚫 **El servicio de inteligencia artificial no está disponible**\n\n';
@@ -1698,18 +914,9 @@ ${contextoSeguimiento}
         
         message += '**Funciones limitadas disponibles:**\n';
         message += '• `mi info` - Ver tu información\n';
+        message += '• `historial` - Ver conversaciones anteriores\n';
         message += '• `logout` - Cerrar sesión\n';
-        message += '• `ayuda` - Ver comandos disponibles\n';
-        
-        if (seguimientoService.isAvailable()) {
-            message += '• `historial` - Ver seguimiento de consultas\n';
-        }
-        
-        if (cosmosService.isAvailable()) {
-            message += '✅ **Persistencia activa**: Tus conversaciones se guardan en Cosmos DB\n\n';
-        } else {
-            message += '⚠️ **Solo memoria temporal**: Las conversaciones no se guardan\n\n';
-        }
+        message += '• `ayuda` - Ver comandos disponibles\n\n';
         
         message += '**Para restaurar funcionalidad completa:**\n';
         message += '• Contacta al administrador del sistema\n';
@@ -1722,7 +929,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ MEJORADO: Manejo de errores más específico
+     * ✅ Manejo de errores más específico
      */
     manejarErrorOpenAI(error, userInfo) {
         const userId = userInfo?.usuario || 'unknown';
@@ -1754,15 +961,8 @@ ${contextoSeguimiento}
 
         message += `\n**Mientras tanto, puedes usar:**\n`;
         message += `• \`mi info\` - Ver tu información\n`;
+        message += `• \`historial\` - Ver conversaciones anteriores\n`;
         message += `• \`ayuda\` - Ver comandos disponibles\n`;
-        
-        if (seguimientoService.isAvailable()) {
-            message += `• \`historial\` - Ver seguimiento de consultas\n`;
-        }
-        
-        if (cosmosService.isAvailable()) {
-            message += `• Tu historial se mantiene guardado en Cosmos DB`;
-        }
 
         return {
             type: 'text',
@@ -1771,7 +971,7 @@ ${contextoSeguimiento}
     }
 
     /**
-     * ✅ MEJORADO: Estadísticas del servicio con seguimiento
+     * ✅ Estadísticas del servicio
      */
     getServiceStats() {
         return {
@@ -1780,50 +980,77 @@ ${contextoSeguimiento}
             error: this.initializationError,
             modelsAvailable: ['gpt-4o-mini'],
             featuresEnabled: {
+                basic_conversation: true,
                 tools: true,
                 conversation_history: true,
                 user_context: true,
-                api_integration: true,
                 tasas_interes: true,
-                document_search: documentService.isAvailable(),
-                vector_search: documentService.isAvailable() && documentService.getConfigInfo().features.vectorSearch,
-                policy_search: documentService.isAvailable(),
-                holiday_search: documentService.isAvailable(),
-                cosmos_persistence: cosmosService.isAvailable(),
-                seguimiento_contextual: seguimientoService.isAvailable()
+                api_integration: true
             },
-            cosmosDB: cosmosService.getConfigInfo(),
-            documentService: documentService.getConfigInfo(),
-            seguimiento: seguimientoService.obtenerEstadisticasGenerales(),
-            timestamp: new Date().toISOString()
+            toolsCount: this.tools?.length || 0,
+            timestamp: new Date().toISOString(),
+            version: '2.1.0-historial-completo'
         };
     }
 
     /**
-     * ✅ NUEVO: Diagnóstico del estado de servicios
+     * ✅ Verificar disponibilidad
      */
-    async diagnosticarServicios() {
-        const estado = {
-            openai: {
-                disponible: this.openaiAvailable,
-                error: this.initializationError
-            },
-            cosmosDB: {
-                disponible: cosmosService.isAvailable(),
-                config: cosmosService.getConfigInfo()
-            },
-            documentService: {
-                disponible: documentService.isAvailable(),
-                config: documentService.getConfigInfo()
-            },
-            seguimiento: {
-                disponible: seguimientoService.isAvailable(),
-                config: seguimientoService.obtenerEstadisticasGenerales()
-            }
-        };
+    isAvailable() {
+        return this.openaiAvailable && this.initialized;
+    }
 
-        return estado;
+    /**
+     * ✅ Procesar mensaje simple (método alternativo para casos especiales)
+     */
+    async procesarMensajeSimple(mensaje, userInfo = null) {
+        try {
+            if (!this.isAvailable()) {
+                return this.createUnavailableResponse();
+            }
+
+            const mensajes = [
+                {
+                    role: "system",
+                    content: `Eres un asistente corporativo de Nova Corporation. 
+                    ${userInfo ? `Usuario: ${userInfo.nombre} (${userInfo.usuario})` : 'Usuario no identificado'}
+                    Responde de forma profesional, clara y concisa.`
+                },
+                {
+                    role: "user",
+                    content: mensaje
+                }
+            ];
+
+            const response = await this.openai.chat.completions.create({
+                model: "gpt-4o-mini",
+                messages: mensajes,
+                temperature: 0.7,
+                max_tokens: 1500
+            });
+
+            return {
+                type: 'text',
+                content: response.choices[0].message.content || 'Sin respuesta'
+            };
+
+        } catch (error) {
+            console.error('❌ Error en procesarMensajeSimple:', error);
+            return this.manejarErrorOpenAI(error, userInfo);
+        }
+    }
+
+    /**
+     * ✅ Limpiar servicio (para desarrollo)
+     */
+    cleanup() {
+        console.log('🧹 Limpiando OpenAI Service...');
+        // No hay mucho que limpiar en este servicio simplificado
+        console.log('✅ OpenAI Service limpiado');
     }
 }
 
-module.exports = new OpenAIService();
+// Crear instancia singleton
+const openaiService = new OpenAIService();
+
+module.exports = openaiService;

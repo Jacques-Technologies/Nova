@@ -787,8 +787,403 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
         return stats;
     }
 
-    // ===== MANTENER TODOS LOS MÉTODOS EXISTENTES =====
-    
+    /**
+     * ✅ Obtiene fecha y hora actual
+     */
+    obtenerFechaHora(formato = 'completo') {
+        const ahora = DateTime.now().setZone('America/Mexico_City');
+        
+        switch (formato) {
+            case 'fecha':
+                return ahora.toFormat('dd/MM/yyyy');
+            case 'hora':
+                return ahora.toFormat('HH:mm:ss');
+            case 'timestamp':
+                return ahora.toISO();
+            case 'completo':
+            default:
+                return {
+                    fecha: ahora.toFormat('dd/MM/yyyy'),
+                    hora: ahora.toFormat('HH:mm:ss'),
+                    timezone: ahora.zoneName,
+                    diaSemana: ahora.toFormat('cccc'),
+                    timestamp: ahora.toISO(),
+                    formato_humano: ahora.toFormat('dd/MM/yyyy HH:mm:ss')
+                };
+        }
+    }
+
+    /**
+     * ✅ Obtiene información del usuario
+     */
+    obtenerInfoUsuario(userInfo, incluirToken = false) {
+        if (!userInfo) {
+            return 'No hay información de usuario disponible';
+        }
+
+        let info = `👤 **Información del Usuario:**\n\n`;
+        info += `📝 **Nombre**: ${userInfo.nombre}\n`;
+        info += `👤 **Usuario**: ${userInfo.usuario}\n`;
+        info += `🏢 **Apellido Paterno**: ${userInfo.paterno || 'N/A'}\n`;
+        info += `🏢 **Apellido Materno**: ${userInfo.materno || 'N/A'}\n`;
+
+        if (incluirToken && userInfo.token) {
+            info += `🔑 **Token**: ${userInfo.token.substring(0, 50)}...\n`;
+            info += `📊 **Token válido**: ${userInfo.token.length > 100 ? 'Sí' : 'Posiblemente no'}\n`;
+        }
+
+        info += `\n💡 Esta información se extrae del token de autenticación de Nova.`;
+
+        return info;
+    }
+
+    /**
+     * ✅ Consulta tasas de interés de Nova
+     */
+    async consultarTasasInteres(anio, userToken, userInfo) {
+        try {
+            const usuario = userInfo?.usuario || 'unknown';
+            console.log(`💰 [${usuario}] Consultando tasas de interés para ${anio}`);
+
+            if (!userToken) {
+                return '❌ **Error**: Token de usuario requerido para consultar tasas de interés';
+            }
+
+            // Extraer NumRI del token
+            const numRI = this.extractNumRIFromToken(userToken);
+            if (!numRI) {
+                return '❌ **Error**: No se pudo extraer NumRI del token para consultar tasas';
+            }
+
+            console.log(`🔍 [${usuario}] NumRI extraído: ${numRI}`);
+
+            // URL de la API de tasas de Nova
+            const tasasUrl = `https://pruebas.nova.com.mx/ApiRestNova/api/TasasInteres/${anio}`;
+            
+            console.log(`🌐 [${usuario}] Consultando: ${tasasUrl}`);
+            console.log(`🔑 [${usuario}] Usando token: ${userToken.substring(0, 30)}...`);
+
+            const response = await axios.get(tasasUrl, {
+                headers: {
+                    'Authorization': `Bearer ${userToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'NumRI': numRI.toString()
+                },
+                timeout: 15000
+            });
+
+            console.log(`✅ [${usuario}] Respuesta recibida - Status: ${response.status}`);
+
+            if (response.status === 200 && response.data) {
+                console.log(`📊 [${usuario}] Datos de tasas obtenidos exitosamente`);
+                return this.formatearTablaTasas(response.data, anio, usuario);
+            } else {
+                console.warn(`⚠️ [${usuario}] Respuesta inválida:`, response.status);
+                return `⚠️ **Advertencia**: Respuesta inesperada del servidor (${response.status})`;
+            }
+
+        } catch (error) {
+            console.error(`❌ [${userInfo?.usuario || 'unknown'}] Error consultando tasas:`, error.message);
+
+            if (error.response) {
+                const status = error.response.status;
+                console.error(`📋 [${userInfo?.usuario || 'unknown'}] Status: ${status}, Data:`, error.response.data);
+
+                if (status === 401) {
+                    return '🔒 **Error 401**: Token expirado o inválido. Por favor, cierra sesión e inicia nuevamente.';
+                } else if (status === 403) {
+                    return '🚫 **Error 403**: Sin permisos para consultar tasas de interés.';
+                } else if (status === 404) {
+                    return `📅 **Error 404**: No se encontraron tasas para el año ${anio}.`;
+                } else {
+                    return `❌ **Error ${status}**: ${error.response.data?.message || 'Error del servidor'}`;
+                }
+            } else if (error.code === 'ECONNREFUSED') {
+                return '🌐 **Error de conexión**: No se pudo conectar con el servidor de Nova.';
+            } else if (error.code === 'ECONNABORTED') {
+                return '⏰ **Timeout**: El servidor tardó demasiado en responder.';
+            } else {
+                return `❌ **Error**: ${error.message}`;
+            }
+        }
+    }
+
+    /**
+     * ✅ Extrae NumRI del token JWT
+     */
+    extractNumRIFromToken(token) {
+        try {
+            if (!token) {
+                console.warn('Token vacío para extraer NumRI');
+                return null;
+            }
+
+            // Limpiar token
+            const cleanToken = token.replace(/^Bearer\s+/, '');
+            
+            // Separar partes del JWT
+            const parts = cleanToken.split('.');
+            if (parts.length !== 3) {
+                console.warn('Token no tiene formato JWT válido');
+                return null;
+            }
+
+            // Decodificar payload
+            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
+            console.log('🔍 Payload del token:', Object.keys(payload));
+
+            // Buscar NumRI en diferentes posibles ubicaciones
+            const possibleKeys = [
+                'NumRI',
+                'numRI', 
+                'numri',
+                'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier',
+                'sub',
+                'user_id',
+                'employee_id'
+            ];
+
+            for (const key of possibleKeys) {
+                if (payload[key]) {
+                    const numRI = parseInt(payload[key]);
+                    if (!isNaN(numRI)) {
+                        console.log(`✅ NumRI encontrado en '${key}': ${numRI}`);
+                        return numRI;
+                    }
+                }
+            }
+
+            // Si no se encuentra, intentar con el usuario
+            const cveUsuario = payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name'] || payload.name || payload.preferred_username;
+            if (cveUsuario) {
+                const numRI = parseInt(cveUsuario);
+                if (!isNaN(numRI)) {
+                    console.log(`✅ NumRI extraído del usuario: ${numRI}`);
+                    return numRI;
+                }
+            }
+
+            console.warn('⚠️ No se pudo extraer NumRI del token');
+            console.log('📋 Campos disponibles en payload:', Object.keys(payload));
+            return null;
+
+        } catch (error) {
+            console.error('❌ Error extrayendo NumRI del token:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * ✅ Formatea tabla de tasas de interés
+     */
+    formatearTablaTasas(tasasData, anio, usuario) {
+        try {
+            console.log(`📊 [${usuario}] Formateando datos de tasas para ${anio}`);
+            
+            if (!tasasData || !Array.isArray(tasasData) || tasasData.length === 0) {
+                return `📅 **Tasas de Interés ${anio}**\n\n❌ No se encontraron datos de tasas para este año.`;
+            }
+
+            let respuesta = `💰 **Tasas de Interés Nova ${anio}**\n\n`;
+            respuesta += `📊 **Datos obtenidos**: ${tasasData.length} registros\n`;
+            respuesta += `📅 **Consulta realizada**: ${DateTime.now().setZone('America/Mexico_City').toFormat('dd/MM/yyyy HH:mm')}\n\n`;
+
+            // Organizar datos por mes
+            const mesesData = {};
+            tasasData.forEach(item => {
+                const mes = item.Mes || item.mes || 'Desconocido';
+                if (!mesesData[mes]) {
+                    mesesData[mes] = {};
+                }
+                
+                // Mapear diferentes nombres de campos
+                Object.keys(item).forEach(key => {
+                    const keyLower = key.toLowerCase();
+                    if (keyLower.includes('vista')) mesesData[mes].vista = item[key];
+                    if (keyLower.includes('fijo1') || keyLower.includes('1mes')) mesesData[mes].fijo1 = item[key];
+                    if (keyLower.includes('fijo3') || keyLower.includes('3mes')) mesesData[mes].fijo3 = item[key];
+                    if (keyLower.includes('fijo6') || keyLower.includes('6mes')) mesesData[mes].fijo6 = item[key];
+                    if (keyLower.includes('fap')) mesesData[mes].fap = item[key];
+                    if (keyLower.includes('nov')) mesesData[mes].nov = item[key];
+                    if (keyLower.includes('prestamo')) mesesData[mes].prestamo = item[key];
+                });
+            });
+
+            // Crear tabla formateada
+            respuesta += `**📈 Tasas por Mes:**\n\n`;
+            
+            const meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+            meses.forEach(mes => {
+                if (mesesData[mes] || mesesData[mes.toLowerCase()]) {
+                    const data = mesesData[mes] || mesesData[mes.toLowerCase()];
+                    respuesta += `**${mes}:**\n`;
+                    if (data.vista !== undefined) respuesta += `   • Vista: ${data.vista}%\n`;
+                    if (data.fijo1 !== undefined) respuesta += `   • Fijo 1 mes: ${data.fijo1}%\n`;
+                    if (data.fijo3 !== undefined) respuesta += `   • Fijo 3 meses: ${data.fijo3}%\n`;
+                    if (data.fijo6 !== undefined) respuesta += `   • Fijo 6 meses: ${data.fijo6}%\n`;
+                    if (data.fap !== undefined) respuesta += `   • FAP: ${data.fap}%\n`;
+                    if (data.nov !== undefined) respuesta += `   • Nov: ${data.nov}%\n`;
+                    if (data.prestamo !== undefined) respuesta += `   • Préstamos: ${data.prestamo}%\n`;
+                    respuesta += `\n`;
+                }
+            });
+
+            // Calcular promedios
+            const allValues = Object.values(mesesData).reduce((acc, month) => {
+                Object.keys(month).forEach(type => {
+                    if (!acc[type]) acc[type] = [];
+                    if (month[type] !== undefined && month[type] !== null) {
+                        acc[type].push(parseFloat(month[type]));
+                    }
+                });
+                return acc;
+            }, {});
+
+            if (Object.keys(allValues).length > 0) {
+                respuesta += `**📊 Promedios Anuales:**\n`;
+                Object.entries(allValues).forEach(([type, values]) => {
+                    if (values.length > 0) {
+                        const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
+                        const typeLabel = type === 'vista' ? 'Vista' :
+                                        type === 'fijo1' ? 'Fijo 1 mes' :
+                                        type === 'fijo3' ? 'Fijo 3 meses' :
+                                        type === 'fijo6' ? 'Fijo 6 meses' :
+                                        type === 'fap' ? 'FAP' :
+                                        type === 'nov' ? 'Nov' :
+                                        type === 'prestamo' ? 'Préstamos' : type;
+                        respuesta += `   • ${typeLabel}: ${avg}%\n`;
+                    }
+                });
+            }
+
+            respuesta += `\n💡 **Nota**: Tasas expresadas en porcentaje anual.`;
+
+            console.log(`✅ [${usuario}] Tabla de tasas formateada exitosamente`);
+            return respuesta;
+
+        } catch (error) {
+            console.error(`❌ [${usuario}] Error formateando tasas:`, error);
+            return `❌ Error formateando datos de tasas: ${error.message}`;
+        }
+    }
+
+    /**
+     * ✅ Consulta API Nova genérica
+     */
+    async consultarApiNova(endpoint, userToken, metodo = 'GET', parametros = {}) {
+        try {
+            if (!userToken) {
+                return '❌ Token de usuario requerido para consultar API Nova';
+            }
+
+            const baseUrl = 'https://pruebas.nova.com.mx/ApiRestNova/api';
+            const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}/${endpoint.replace(/^\//, '')}`;
+
+            console.log(`🌐 Consultando API Nova: ${metodo} ${url}`);
+
+            const config = {
+                method: metodo,
+                url: url,
+                headers: {
+                    'Authorization': `Bearer ${userToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                timeout: 15000
+            };
+
+            if (metodo === 'POST' && parametros) {
+                config.data = parametros;
+            } else if (metodo === 'GET' && parametros) {
+                config.params = parametros;
+            }
+
+            const response = await axios(config);
+
+            if (response.status === 200) {
+                return {
+                    success: true,
+                    data: response.data,
+                    status: response.status,
+                    message: 'Consulta exitosa'
+                };
+            } else {
+                return {
+                    success: false,
+                    status: response.status,
+                    message: `Respuesta inesperada: ${response.status}`
+                };
+            }
+
+        } catch (error) {
+            console.error('❌ Error consultando API Nova:', error.message);
+
+            if (error.response) {
+                return {
+                    success: false,
+                    status: error.response.status,
+                    message: `Error ${error.response.status}: ${error.response.data?.message || 'Error del servidor'}`,
+                    data: error.response.data
+                };
+            } else {
+                return {
+                    success: false,
+                    message: `Error de conexión: ${error.message}`
+                };
+            }
+        }
+    }
+
+    /**
+     * ✅ Crea respuesta cuando OpenAI no está disponible
+     */
+    createUnavailableResponse() {
+        return {
+            type: 'text',
+            content: `🤖 **Servicio OpenAI no disponible**\n\n` +
+                    `❌ **Error**: ${this.initializationError}\n\n` +
+                    `💡 **Posibles soluciones**:\n` +
+                    `• Verificar configuración de OPENAI_API_KEY\n` +
+                    `• Comprobar conectividad a internet\n` +
+                    `• Verificar cuota de OpenAI\n\n` +
+                    `⚠️ **Nota**: Algunas funciones del bot están limitadas sin OpenAI.`
+        };
+    }
+
+    /**
+     * ✅ Maneja errores de OpenAI
+     */
+    manejarErrorOpenAI(error, userInfo) {
+        const userId = userInfo?.usuario || 'unknown';
+        console.error(`❌ [${userId}] Error OpenAI:`, error.message);
+
+        let errorMessage = '❌ **Error del servicio OpenAI**\n\n';
+
+        if (error.message.includes('insufficient_quota')) {
+            errorMessage += '💳 **Cuota agotada**: La cuota de OpenAI se ha agotado.';
+        } else if (error.message.includes('rate_limit')) {
+            errorMessage += '⏰ **Límite de velocidad**: Demasiadas solicitudes. Intenta en unos momentos.';
+        } else if (error.message.includes('invalid_api_key')) {
+            errorMessage += '🔑 **API Key inválida**: Problema de configuración.';
+        } else if (error.message.includes('model_not_found')) {
+            errorMessage += '🤖 **Modelo no encontrado**: El modelo solicitado no está disponible.';
+        } else if (error.message.includes('timeout')) {
+            errorMessage += '⏰ **Timeout**: El servidor tardó demasiado en responder.';
+        } else {
+            errorMessage += `🔧 **Error técnico**: ${error.message}`;
+        }
+
+        errorMessage += '\n\n💡 Intenta nuevamente en unos momentos.';
+
+        return {
+            type: 'text',
+            content: errorMessage
+        };
+    }
+
     selectBestModel(mensaje, userInfo) {
         const mensajeLower = mensaje.toLowerCase();
         
@@ -874,16 +1269,6 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
         return usarHerramientas;
     }
 
-    // ===== MANTENER MÉTODOS EXISTENTES =====
-    obtenerFechaHora(formato) { /* mantener igual */ }
-    obtenerInfoUsuario(userInfo, incluirToken = false) { /* mantener igual */ }
-    consultarTasasInteres(anio, userToken, userInfo) { /* mantener igual */ }
-    extractNumRIFromToken(token) { /* mantener igual */ }
-    formatearTablaTasas(tasasData, anio, usuario) { /* mantener igual */ }
-    consultarApiNova(endpoint, userToken, metodo = 'GET', parametros = {}) { /* mantener igual */ }
-    createUnavailableResponse() { /* mantener igual */ }
-    manejarErrorOpenAI(error, userInfo) { /* mantener igual */ }
-    
     /**
      * ✅ MEJORADO: Estadísticas del servicio con información de conversación
      */

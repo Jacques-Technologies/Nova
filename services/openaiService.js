@@ -842,69 +842,60 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
      */
     async consultarTasasInteres(anio, userToken, userInfo) {
         try {
-            const usuario = userInfo?.usuario || 'unknown';
-            console.log(`💰 [${usuario}] Consultando tasas de interés para ${anio}`);
-
-            if (!userToken) {
-                return '❌ **Error**: Token de usuario requerido para consultar tasas de interés';
+            if (!userToken || !userInfo) {
+                return "❌ **Error**: Usuario no autenticado para consultar tasas";
             }
 
-            // Extraer NumRI del token
-            const numRI = this.extractNumRIFromToken(userToken);
-            if (!numRI) {
-                return '❌ **Error**: No se pudo extraer NumRI del token para consultar tasas';
-            }
+            const cveUsuario = userInfo.usuario;
+            const numRI = this.extractNumRIFromToken(userToken) || "7";
 
-            console.log(`🔍 [${usuario}] NumRI extraído: ${numRI}`);
+            console.log(`💰 [${cveUsuario}] Consultando tasas para año ${anio}`);
 
-            // URL de la API de tasas de Nova
-            const tasasUrl = `https://pruebas.nova.com.mx/ApiRestNova/api/TasasInteres/${anio}`;
-            
-            console.log(`🌐 [${usuario}] Consultando: ${tasasUrl}`);
-            console.log(`🔑 [${usuario}] Usando token: ${userToken.substring(0, 30)}...`);
-
-            const response = await axios.get(tasasUrl, {
-                headers: {
-                    'Authorization': `Bearer ${userToken}`,
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'NumRI': numRI.toString()
+            const requestBody = {
+                usuarioActual: {
+                    CveUsuario: cveUsuario
                 },
-                timeout: 15000
-            });
+                data: {
+                    NumRI: numRI,
+                    Anio: anio
+                }
+            };
 
-            console.log(`✅ [${usuario}] Respuesta recibida - Status: ${response.status}`);
+            console.log('📡 Request body para tasas:', JSON.stringify(requestBody, null, 2));
+            const url = process.env.NOVA_API_URL_TASA || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaTasa/consultaTasa';
+            
+            const response = await axios.post(
+                url,
+                requestBody,
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${userToken}`,
+                        'Accept': 'application/json'
+                    },
+                    timeout: 15000
+                }
+            );
 
-            if (response.status === 200 && response.data) {
-                console.log(`📊 [${usuario}] Datos de tasas obtenidos exitosamente`);
-                return this.formatearTablaTasas(response.data, anio, usuario);
+            console.log(`📊 Respuesta tasas (${response.status}):`, JSON.stringify(response.data, null, 2));
+
+            if (response.status === 200 && response.data?.info) {
+                return this.formatearTablaTasas(response.data.info, anio, cveUsuario);
             } else {
-                console.warn(`⚠️ [${usuario}] Respuesta inválida:`, response.status);
-                return `⚠️ **Advertencia**: Respuesta inesperada del servidor (${response.status})`;
+                return `⚠️ **Respuesta inesperada al consultar tasas**: Status ${response.status}`;
             }
 
         } catch (error) {
-            console.error(`❌ [${userInfo?.usuario || 'unknown'}] Error consultando tasas:`, error.message);
-
-            if (error.response) {
-                const status = error.response.status;
-                console.error(`📋 [${userInfo?.usuario || 'unknown'}] Status: ${status}, Data:`, error.response.data);
-
-                if (status === 401) {
-                    return '🔒 **Error 401**: Token expirado o inválido. Por favor, cierra sesión e inicia nuevamente.';
-                } else if (status === 403) {
-                    return '🚫 **Error 403**: Sin permisos para consultar tasas de interés.';
-                } else if (status === 404) {
-                    return `📅 **Error 404**: No se encontraron tasas para el año ${anio}.`;
-                } else {
-                    return `❌ **Error ${status}**: ${error.response.data?.message || 'Error del servidor'}`;
-                }
-            } else if (error.code === 'ECONNREFUSED') {
-                return '🌐 **Error de conexión**: No se pudo conectar con el servidor de Nova.';
-            } else if (error.code === 'ECONNABORTED') {
-                return '⏰ **Timeout**: El servidor tardó demasiado en responder.';
+            console.error('❌ Error consultando tasas de interés:', error.message);
+            
+            if (error.response?.status === 401) {
+                return "🔒 **Error de autorización**: Tu token puede haber expirado. Intenta cerrar sesión e iniciar nuevamente.";
+            } else if (error.response?.status === 404) {
+                return "❌ **Servicio no encontrado**: El servicio de consulta de tasas no está disponible.";
+            } else if (error.response?.status === 400) {
+                return `❌ **Datos inválidos**: Verifica que el año ${anio} sea válido.`;
             } else {
-                return `❌ **Error**: ${error.message}`;
+                return `❌ **Error consultando tasas**: ${error.message}`;
             }
         }
     }

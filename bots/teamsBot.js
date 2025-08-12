@@ -212,7 +212,6 @@ class TeamsBot extends DialogBot {
 
             respuesta += `\n\n💡 **Comandos útiles:**\n`;
             respuesta += `• \`resumen\` - Resumen inteligente de la conversación\n`;
-            respuesta += `• \`conversacion openai\` - Ver formato OpenAI completo\n`;
             respuesta += `• \`limpiar historial\` - Eliminar mensajes\n\n`;
             
             respuesta += `📋 **Formato**: Máximo 5 mensajes de usuario + 5 del asistente\n`;
@@ -515,11 +514,6 @@ class TeamsBot extends DialogBot {
             }
 
             // ✅ COMANDOS DE CONVERSACIÓN OpenAI
-            if (lowerText === 'conversacion openai' || lowerText === 'formato openai') {
-                await this.showConversationFormatOpenAI(context, userId, conversationId);
-                return await next();
-            }
-
             if (lowerText === 'limpiar conversacion' || lowerText === 'limpiar formato openai') {
                 await this.limpiarConversacionFormatoOpenAI(context, userId, conversationId);
                 return await next();
@@ -1006,7 +1000,6 @@ class TeamsBot extends DialogBot {
                 `• \`limpiar historial\` - Eliminar cache de mensajes\n\n` +
                 
                 `🤖 **Comandos OpenAI:**\n` +
-                `• \`conversacion openai\` - Ver formato OpenAI completo\n` +
                 `• \`limpiar conversacion\` - Limpiar formato OpenAI\n\n` +
                 
                 `👤 **Comandos de Usuario:**\n` +

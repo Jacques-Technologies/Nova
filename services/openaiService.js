@@ -1,4 +1,4 @@
-// services/openaiService.js - MEJORADO: Con soporte para formato de conversación
+// services/openaiService.js - MEJORADO: Con soporte para formato de conversación Y consulta de saldos
 const OpenAI = require('openai');
 const { DateTime } = require('luxon');
 const axios = require('axios');
@@ -11,6 +11,7 @@ require('dotenv').config();
  * - Mantiene compatibilidad con historial tradicional
  * - Aprovecha formato de conversación cuando está disponible
  * - Guardado automático en formato OpenAI
+ * - Consulta de saldos Nova
  */
 class OpenAIService {
     constructor() {
@@ -180,6 +181,29 @@ class OpenAIService {
                     }
                 }
             },
+            // ✅ NUEVA HERRAMIENTA: Consultar saldos del usuario
+            {
+                type: "function",
+                function: {
+                    name: "consultar_saldo_usuario",
+                    description: "Consulta el saldo actual del usuario en Nova. Muestra saldo disponible, retenido y total por tipo de cuenta.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            tipo_sistema: {
+                                type: "string",
+                                description: "Tipo de sistema a consultar (opcional, se puede dejar vacío para consultar todos)",
+                                default: ""
+                            },
+                            incluir_detalles: {
+                                type: "boolean",
+                                description: "Si incluir detalles adicionales del saldo",
+                                default: true
+                            }
+                        }
+                    }
+                }
+            },
             {
                 type: "function",
                 function: {
@@ -226,7 +250,6 @@ class OpenAIService {
                     }
                 }
             },
-            // ✅ NUEVA HERRAMIENTA: Trabajar con formato de conversación
             {
                 type: "function",
                 function: {
@@ -251,7 +274,7 @@ class OpenAIService {
             }
         ];
 
-        console.log(`🛠️ ${tools.length} herramientas definidas para OpenAI (incluyendo análisis de conversación)`);
+        console.log(`🛠️ ${tools.length} herramientas definidas para OpenAI (incluyendo consulta de saldos)`);
         return tools;
     }
 
@@ -384,7 +407,68 @@ class OpenAIService {
 
         const mensajes = [{
             role: "system",
-            content: `Eres un asistente corporativo inteligente para Nova Corporation con memoria de conversación.
+            content: `
+        // ✅ AQUÍ VAN LAS INSTRUCCIONES DEL PROMPT ✅
+        
+        Tu nombre es Nova-AI, y eres un Asistente virtual inteligente para la institución financiera Nova.
+        
+        DIRECTRICES GENERALES:
+        - Responde únicamente en español
+        - Si te dan las gracias, responde que es un gusto ayudar y si hay algo más en lo que puedas asistirlos
+        - Utiliza el historial de la conversación como referencia
+        - Utiliza sólo la información de referencia brindada
+        - Si tu respuesta incluye algo que no se encuentre en la información de referencia brindada, añade en negritas 'Esta información no proviene de los documentos internos de Nova'
+        - No respondas preguntas que no sean de Nova y sus servicios financieros
+        - Nunca te disculpes por confusiones en la conversación
+        - Si no conoces la respuesta menciona que no cuentas con esa información
+        - Utiliza de manera preferente la información de referencia con más exactitud y apego a la pregunta
+        - Responde con mucho detalle, busca hacer listados y presentar la información de una manera útil y accesible
+        - Siempre que puedas haz listados para organizar tu respuesta, usando bullets, negritas, dando respuestas largas y estructuradas
+
+        ALCANCE DE CONOCIMIENTOS:
+        Si te preguntan acerca de tu alcance, información que conoces, qué sabes hacer o tu base de conocimientos, responde que conoces los servicios financieros de Nova así como los procedimientos principales.
+
+        Algunos ejemplos de la información que conoces son: consultas de saldos, procedimientos de retiro de ahorros, transferencias entre tipos de ahorro, tasas de interés para ahorros y préstamos, gestión de cuotas de ahorro, tipos de ahorro disponibles, horarios de operaciones, tipos de préstamos disponibles, lineamientos para préstamos, procedimientos para solicitar préstamos, préstamos hipotecarios, pagos de préstamos, guías de uso de APP y portal web, recuperación de facturas en garantía, liberación de hipotecas, préstamos con garantía de inversión, entre muchos otros servicios financieros.
+
+        CASOS DE USO ESPECÍFICOS:
+        
+        Para consultas de saldo: Cuando el usuario pregunte "¿Cuánto dinero tengo?" o similares, muestra saldo actual dividido en disponible y retenido.
+        
+        Para retiros de ahorros: Cuando el usuario pregunte "¿Qué necesito para retirar mi dinero?" o similares, proporciona el procedimiento completo para retiro de ahorros.
+        
+        Para transferencias entre tipos de ahorro: Cuando el usuario solicite "Quiero mover dinero de mi cuenta de ahorros a la cuenta a plazo fijo" o similares, muestra el procedimiento para transferencia entre ahorros.
+        
+        Para consultas de tasas de interés para ahorros: Cuando el usuario pregunte "¿Cuál es la tasa de interés para la cuenta de ahorro los diferentes plazo?" o similares, muestra tabla de tasas de interés vigente del mes.
+        
+        Para consultas de tasas de interés para préstamos: Cuando el usuario pregunte "¿Cuál es la tasa de interés para los préstamos?" o similares, muestra tabla de tasas de interés vigente del mes para préstamos y recuerda que es tasa revisable cada mes.
+        
+        Para gestión de cuotas de ahorros: Cuando el usuario pregunte "¿Cómo puedo cambiar el monto de mi cuota de ahorro programado?" o "¿Puedo reducir la cuota que estoy ahorrando cada mes?" o similares, muestra procedimiento de asignación de cuotas de ahorro.
+        
+        Para pago de préstamos con ahorro vista: Cuando el usuario pregunte "¿Puedo pagar mi préstamo con el saldo de mi cuenta de ahorro vista?" o similares, muestra procedimiento de transferencia de ahorros para pago a préstamo.
+        
+        Para tipos de ahorro disponibles: Cuando el usuario pregunte "¿Qué opciones de ahorro tengo disponibles?" o similares, muestra tabla de tipos de ahorro con plazos de vencimiento y tasas de interés vigente.
+        
+        Para horario de operaciones: Cuando el usuario pregunte "¿En qué horario puedo ver mis movimientos de retiro?" o "¿Los retiros se reflejan al instante o en cierto horario?" o similares, muestra tabla de horarios disponibles hábiles y en días festivos para disposición de ahorros por retiro y pago de préstamos.
+        
+        Para tipos de préstamos disponibles: Cuando el usuario pregunte "¿Qué opciones de préstamos tengo disponibles?" o similares, muestra tipos de préstamos.
+        
+        Para lineamientos generales para préstamos: Cuando el usuario pregunte "¿Cuáles son los requisitos para solicitar un préstamo?" o similares, muestra lineamiento para otorgar préstamo, con detalle de cálculo.
+        
+        Para procedimiento para solicitar un préstamo: Cuando el usuario pregunte "¿Cuáles son los pasos para solicitar un préstamo?" o similares, muestra los pasos para solicitar un préstamo, con detalle de cálculo.
+        
+        Para procedimiento para solicitar un préstamo hipotecario: Cuando el usuario pregunte "¿Cuáles son los pasos para solicitar un préstamo hipotecario?" o similares, muestra los pasos para solicitar un préstamo hipotecario, con detalle de cálculo.
+        
+        Para procedimiento para pagar un préstamo: Cuando el usuario pregunte "¿Puedo pagar el préstamo directamente desde mi cuenta bancaria? ¿Cómo se hace?" o similares, muestra los pasos para realizar pagos desde la cuenta bancaria relacionada al socio y proporciona cuenta y referencia bancaria.
+        
+        Para guía para uso de APP: Cuando el usuario pregunte "¿Tienen un manual o guía para usar la app?" o "Soy nuevo, ¿hay algún tutorial para aprender a usar la app?" o similares, muestra tutorial para uso de APP.
+        
+        Para guía para uso de página: Cuando el usuario pregunte "¿Tienen un manual o guía para usar la página de Nova?" o "Soy nuevo, ¿hay algún tutorial para aprender a usar la página de Nova?" o similares, muestra tutorial para uso de página web – portal.
+        
+        Para recuperación de factura por garantía de préstamos: Cuando el usuario pregunte "¿Qué necesito para recuperar una factura que dejé como garantía de mi préstamo?" o similares, muestra pasos a seguir para recuperar una factura en garantía.
+        
+        Para procedimiento para liberación de hipoteca: Cuando el usuario pregunte "¿Cuáles son los requisitos para liberar mi hipoteca?" o similares, muestra pasos a seguir la liberación de una hipoteca.
+        
+        Para procedimiento para préstamos con garantía de inversión: Cuando el usuario pregunte "¿Qué debo hacer si necesito retirar un ahorro antes de su vencimiento?" o "¿Puedo retirar mi ahorro antes de que se cumpla el plazo?" o "¿Qué pasa si quiero sacar mi dinero antes del vencimiento del ahorro?" o "¿Hay forma de hacer un retiro anticipado de mi ahorro a plazo?" o similares, muestra procedimiento de préstamos con garantía de inversión, formato para solicitud.
 
 🔷 **Contexto del Usuario:**
 ${userContext}
@@ -400,6 +484,7 @@ ${historial.length > 0 ?
 
 🔷 **Tus Capacidades:**
 • Conversación natural e inteligente con memoria contextual
+• Consulta de saldos del usuario autenticado
 • Consulta de tasas de interés de Nova (herramienta especializada)
 • Información del usuario autenticado
 • Consultas a APIs internas de Nova
@@ -415,6 +500,7 @@ ${historial.length > 0 ?
 
 🔷 **Importante:**
 • Siempre mantén la información del usuario segura
+• Para consultas de saldos, usa la herramienta especializada
 • Para consultas de tasas, usa la herramienta especializada
 • Usa el historial de conversación para dar respuestas más personalizadas
 • Si el usuario se refiere a algo anterior, busca en el historial proporcionado`
@@ -504,7 +590,7 @@ ${historial.length > 0 ?
     }
 
     /**
-     * ✅ MEJORADO: Ejecutar herramientas con nueva funcionalidad de análisis
+     * ✅ MEJORADO: Ejecutar herramientas con nueva funcionalidad de saldos
      */
     async ejecutarHerramienta(nombre, parametros, userToken, userInfo, conversationId) {
         const userId = userInfo?.usuario || 'unknown';
@@ -521,6 +607,16 @@ ${historial.length > 0 ?
             case 'consultar_tasas_interes':
                 console.log(`💰 [${userId}] Consultando tasas para año: ${parametros.anio}`);
                 return await this.consultarTasasInteres(parametros.anio, userToken, userInfo);
+
+            // ✅ NUEVA HERRAMIENTA: Consultar saldo del usuario
+            case 'consultar_saldo_usuario':
+                console.log(`💳 [${userId}] Consultando saldo del usuario`);
+                return await this.consultarSaldoUsuario(
+                    userToken, 
+                    userInfo, 
+                    parametros.tipo_sistema || "",
+                    parametros.incluir_detalles !== false
+                );
 
             case 'generar_resumen_conversacion':
                 console.log(`📊 [${userId}] Generando resumen de conversación`);
@@ -540,7 +636,6 @@ ${historial.length > 0 ?
                     parametros.parametros
                 );
 
-            // ✅ NUEVA HERRAMIENTA: Análisis de conversación OpenAI
             case 'analizar_conversacion_openai':
                 console.log(`🔍 [${userId}] Analizando conversación OpenAI: ${parametros.tipo_analisis}`);
                 return await this.analizarConversacionOpenAI(
@@ -552,6 +647,174 @@ ${historial.length > 0 ?
 
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
+        }
+    }
+
+    /**
+     * ✅ NUEVA HERRAMIENTA: Consultar saldo del usuario
+     */
+    async consultarSaldoUsuario(userToken, userInfo, tipoSist = "", incluirDetalles = true) {
+        try {
+            if (!userToken || !userInfo) {
+                return "❌ **Error**: Usuario no autenticado para consultar saldo";
+            }
+
+            const cveUsuario = userInfo.usuario;
+            console.log(`💳 [${cveUsuario}] Consultando saldo del usuario...`);
+
+            const requestBody = {
+                usuarioActual: {
+                    CveUsuario: cveUsuario
+                },
+                data: {
+                    NumSocio: cveUsuario,
+                    TipoSist: tipoSist
+                }
+            };
+
+            console.log('📡 Request body para saldo:', JSON.stringify(requestBody, null, 2));
+            const url = process.env.NOVA_API_URL_SALDO || 'https://pruebas.nova.com.mx/ApiRestNova/api/ConsultaSaldo/ObtSaldo';
+            
+            const response = await axios.post(
+                url,
+                requestBody,
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${userToken}`,
+                        'Accept': 'application/json'
+                    },
+                    timeout: 15000
+                }
+            );
+
+            console.log(`📊 Respuesta saldo (${response.status}):`, JSON.stringify(response.data, null, 2));
+
+            if (response.status === 200 && response.data) {
+                return this.formatearSaldoUsuario(response.data, userInfo, incluirDetalles);
+            } else {
+                return `⚠️ **Respuesta inesperada al consultar saldo**: Status ${response.status}`;
+            }
+
+        } catch (error) {
+            console.error('❌ Error consultando saldo del usuario:', error.message);
+            
+            if (error.response?.status === 401) {
+                return "🔒 **Error de autorización**: Tu token puede haber expirado. Intenta cerrar sesión e iniciar nuevamente.";
+            } else if (error.response?.status === 404) {
+                return "❌ **Servicio no encontrado**: El servicio de consulta de saldos no está disponible.";
+            } else if (error.response?.status === 400) {
+                return `❌ **Datos inválidos**: Error en los parámetros de consulta.`;
+            } else {
+                return `❌ **Error consultando saldo**: ${error.message}`;
+            }
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Formatear información de saldo del usuario
+     */
+    formatearSaldoUsuario(saldoData, userInfo, incluirDetalles = true) {
+        try {
+            const hoyMX = new Date().toLocaleDateString('es-MX');
+            const horaMX = new Date().toLocaleTimeString('es-MX');
+
+            let resultado = `💳 **CONSULTA DE SALDO - NOVA CORPORATION**\n\n`;
+            resultado += `👤 **Usuario**: ${userInfo.nombre || userInfo.usuario}\n`;
+            resultado += `🆔 **Número de Socio**: ${userInfo.usuario}\n`;
+            resultado += `📅 **Consulta**: ${hoyMX} ${horaMX}\n\n`;
+
+            // ✅ Verificar si hay datos de saldo
+            if (!saldoData || (!saldoData.info && !saldoData.data && !saldoData.saldos)) {
+                resultado += `⚠️ **Sin información de saldo disponible**\n`;
+                resultado += `Esto puede suceder por:\n`;
+                resultado += `• No tienes cuentas de ahorro activas\n`;
+                resultado += `• El sistema está en mantenimiento\n`;
+                resultado += `• Error temporal en la consulta\n\n`;
+                resultado += `💡 Intenta consultar nuevamente en unos minutos o contacta a soporte.`;
+                return resultado;
+            }
+
+            // ✅ Procesar datos de saldo (adaptable a diferentes estructuras de respuesta)
+            let saldos = [];
+            
+            if (saldoData.info && Array.isArray(saldoData.info)) {
+                saldos = saldoData.info;
+            } else if (saldoData.data && Array.isArray(saldoData.data)) {
+                saldos = saldoData.data;
+            } else if (saldoData.saldos && Array.isArray(saldoData.saldos)) {
+                saldos = saldoData.saldos;
+            } else if (Array.isArray(saldoData)) {
+                saldos = saldoData;
+            }
+
+            if (saldos.length === 0) {
+                resultado += `⚠️ **No se encontraron cuentas de ahorro**\n`;
+                resultado += `• Verifica que tengas productos de ahorro activos en Nova\n`;
+                resultado += `• Si acabas de abrir una cuenta, puede tardar unos minutos en aparecer`;
+                return resultado;
+            }
+
+            // ✅ Calcular totales
+            let totalDisponible = 0;
+            let totalRetenido = 0;
+            let totalGeneral = 0;
+
+            saldos.forEach(cuenta => {
+                const disponible = parseFloat(cuenta.saldoDisponible || cuenta.disponible || cuenta.SaldoDisponible || 0);
+                const retenido = parseFloat(cuenta.saldoRetenido || cuenta.retenido || cuenta.SaldoRetenido || 0);
+                
+                totalDisponible += disponible;
+                totalRetenido += retenido;
+                totalGeneral += disponible + retenido;
+            });
+
+            // ✅ Resumen de saldos
+            resultado += `📊 **RESUMEN DE SALDOS**\n`;
+            resultado += `💰 **Total Disponible**: $${totalDisponible.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n`;
+            resultado += `🔒 **Total Retenido**: $${totalRetenido.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n`;
+            resultado += `💎 **Total General**: $${totalGeneral.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n\n`;
+
+            // ✅ Detalle por cuenta (si se solicita)
+            if (incluirDetalles && saldos.length > 0) {
+                resultado += `📋 **DETALLE POR CUENTA**\n\n`;
+
+                saldos.forEach((cuenta, index) => {
+                    const tipoCuenta = cuenta.tipoCuenta || cuenta.tipo || cuenta.TipoCuenta || `Cuenta ${index + 1}`;
+                    const disponible = parseFloat(cuenta.saldoDisponible || cuenta.disponible || cuenta.SaldoDisponible || 0);
+                    const retenido = parseFloat(cuenta.saldoRetenido || cuenta.retenido || cuenta.SaldoRetenido || 0);
+                    const total = disponible + retenido;
+
+                    resultado += `🏦 **${tipoCuenta}**\n`;
+                    resultado += `   💰 Disponible: $${disponible.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n`;
+                    resultado += `   🔒 Retenido: $${retenido.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n`;
+                    resultado += `   💎 Total: $${total.toLocaleString('es-MX', {minimumFractionDigits: 2})}\n`;
+
+                    // Información adicional si está disponible
+                    if (cuenta.numeroCuenta || cuenta.numero || cuenta.NumeroCuenta) {
+                        resultado += `   🔢 Número: ${cuenta.numeroCuenta || cuenta.numero || cuenta.NumeroCuenta}\n`;
+                    }
+                    if (cuenta.fechaUltimoMovimiento || cuenta.ultimoMovimiento) {
+                        resultado += `   📅 Último mov.: ${cuenta.fechaUltimoMovimiento || cuenta.ultimoMovimiento}\n`;
+                    }
+
+                    resultado += `\n`;
+                });
+            }
+
+            // ✅ Información adicional
+            resultado += `💡 **Información Importante**\n`;
+            resultado += `• **Saldo Disponible**: Dinero que puedes retirar inmediatamente\n`;
+            resultado += `• **Saldo Retenido**: Fondos en proceso o con restricciones temporales\n`;
+            resultado += `• Los saldos se actualizan en tiempo real durante horario bancario\n`;
+            resultado += `• Para movimientos, consulta el historial en tu app Nova\n\n`;
+            resultado += `🕐 **Horarios de disposición**: Lunes a viernes 8:00 - 18:00 hrs`;
+
+            return resultado;
+
+        } catch (error) {
+            console.error('❌ Error formateando saldo:', error);
+            return `❌ **Error formateando información de saldo**: ${error.message}`;
         }
     }
 
@@ -1167,6 +1430,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             mensajeLower.includes('código') ||
             mensajeLower.includes('programar') ||
             mensajeLower.includes('tasas') ||
+            mensajeLower.includes('saldo') ||
             mensajeLower.includes('resumen') ||
             mensaje.length > 200) {
             return "gpt-4o-mini";
@@ -1185,6 +1449,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             mensajeLower.includes('explicar') ||
             mensajeLower.includes('información') ||
             mensajeLower.includes('tasas') ||
+            mensajeLower.includes('saldo') ||
             mensajeLower.includes('resumen')) {
             return 0.3;
         }
@@ -1216,6 +1481,11 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             // Información personal
             'mi información', 'mis datos', 'perfil', 'mi info', 'quien soy',
             
+            // ✅ NUEVAS: Palabras clave para saldos
+            'saldo', 'saldos', 'cuánto tengo', 'cuanto tengo', 'dinero',
+            'cuenta', 'cuentas', 'disponible', 'retenido', 'balance',
+            'mi dinero', 'mi saldo', 'consultar saldo', 'ver saldo',
+            
             // Tasas de interés - PALABRAS CLAVE ESPECÍFICAS
             'tasas', 'tasa', 'interes', 'interés', 'préstamo', 'crédito',
             'vista', 'fijo', 'fap', 'nov', 'depósito', 'depósitos',
@@ -1225,7 +1495,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             'resumen', 'resumir', 'análisis', 'analizar',
             'reporte', 'informe',
             
-            // ✅ NUEVOS: Análisis de conversación
+            // Análisis de conversación
             'analizar conversacion', 'analisis conversacion', 'patrones',
             'sentimientos', 'temas', 'recomendaciones',
             
@@ -1244,7 +1514,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
     }
 
     /**
-     * ✅ MEJORADO: Estadísticas del servicio con información de conversación
+     * ✅ MEJORADO: Estadísticas del servicio con información de saldos
      */
     getServiceStats() {
         return {
@@ -1257,10 +1527,11 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
                 tools: true,
                 conversation_history: true,
                 user_context: true,
+                saldo_consultation: true,              // ✅ NUEVA
                 tasas_interes: true,
                 api_integration: true,
-                openai_conversation_format: cosmosService.isAvailable(), // ✅ NUEVA
-                conversation_analysis: cosmosService.isAvailable()       // ✅ NUEVA
+                openai_conversation_format: cosmosService.isAvailable(),
+                conversation_analysis: cosmosService.isAvailable()
             },
             toolsCount: this.tools?.length || 0,
             conversationFormatSupport: {
@@ -1270,7 +1541,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
                 statisticsCalculation: true
             },
             timestamp: new Date().toISOString(),
-            version: '2.1.3-conversation-format'
+            version: '2.2.0-saldos-support'             // ✅ NUEVA VERSIÓN
         };
     }
 

@@ -40,7 +40,7 @@ class AzureOpenAIService {
             apiKey: process.env.OPENAI_API_KEY,
             endpoint: process.env.OPENAI_ENDPOINT,
             region: 'eastus2', 
-            deploymentName: 'gpt-4.1-mini'
+            deploymentName: 'gpt-4o-mini'
         };
 
         console.log('📊 Estado de configuración Azure:');

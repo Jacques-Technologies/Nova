@@ -1,5 +1,7 @@
-// services/openaiService.js - MEJORADO: Con soporte para formato de conversación Y consulta de saldos
-const OpenAI = require('openai');
+
+// services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI y formato de conversación
+const { OpenAI } = require('openai');
+const { DefaultAzureCredential } = require('@azure/identity');
 const { DateTime } = require('luxon');
 const axios = require('axios');
 const { CardFactory } = require('botbuilder');
@@ -7,82 +9,108 @@ const cosmosService = require('./cosmosService');
 require('dotenv').config();
 
 /**
- * Servicio OpenAI MEJORADO con soporte para formato de conversación OpenAI
+ * Servicio Azure OpenAI MEJORADO con soporte para formato de conversación
+ * - Integración completa con Azure OpenAI Service
  * - Mantiene compatibilidad con historial tradicional
  * - Aprovecha formato de conversación cuando está disponible
  * - Guardado automático en formato OpenAI
  * - Consulta de saldos Nova
  */
-class OpenAIService {
+class AzureOpenAIService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando OpenAI Service con soporte para formato de conversación...');
+        console.log('🚀 Inicializando Azure OpenAI Service con soporte para formato de conversación...');
         this.diagnoseConfiguration();
-        this.initializeOpenAI();
+        this.initializeAzureOpenAI();
         this.tools = this.defineTools();
         
-        console.log(`✅ OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
+        console.log(`✅ Azure OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
         console.log(`🔗 Formato de conversación: ${cosmosService.isAvailable() ? 'Disponible' : 'No disponible'}`);
     }
 
     /**
-     * ✅ Diagnóstico de configuración
+     * ✅ Diagnóstico de configuración Azure OpenAI
      */
     diagnoseConfiguration() {
-        console.log('🔍 Diagnosticando configuración OpenAI...');
+        console.log('🔍 Diagnosticando configuración Azure OpenAI...');
         
         const config = {
             apiKey: process.env.OPENAI_API_KEY,
-            organization: process.env.OPENAI_ORGANIZATION || null,
-            baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
+            endpoint: process.env.OPENAI_ENDPOINT,
+            region: 'eastus2', 
+            deploymentName: 'gpt-4.1-mini'
         };
 
-        console.log('📊 Estado de configuración:');
+        console.log('📊 Estado de configuración Azure:');
         console.log(`   API Key: ${config.apiKey ? '✅ Configurada' : '❌ Faltante'}`);
-        console.log(`   Organization: ${config.organization ? '✅ Configurada' : '⚠️ Opcional'}`);
-        console.log(`   Base URL: ${config.baseURL}`);
+        console.log(`   Endpoint: ${config.endpoint ? '✅ Configurado' : '❌ Faltante'}`);
+        console.log(`   Region: ${config.region ? '✅ Configurada' : '⚠️ Opcional'}`);
+        console.log(`   API Version: ${config.apiVersion}`);
+        console.log(`   Deployment: ${config.deploymentName}`);
         
         if (config.apiKey) {
             console.log(`   Key Preview: ${config.apiKey.substring(0, 10)}...${config.apiKey.slice(-4)}`);
         }
+        if (config.endpoint) {
+            console.log(`   Endpoint: ${config.endpoint}`);
+        }
+
+        this.config = config;
     }
 
     /**
-     * ✅ Inicialización del cliente OpenAI
+     * ✅ Inicialización del cliente Azure OpenAI
      */
-    initializeOpenAI() {
+    initializeAzureOpenAI() {
         try {
-            const apiKey = process.env.OPENAI_API_KEY;
+            const { apiKey, endpoint, apiVersion, deploymentName } = this.config;
             
             if (!apiKey) {
-                this.initializationError = 'OPENAI_API_KEY no está configurada en las variables de entorno';
-                console.error('❌ OpenAI Error:', this.initializationError);
+                this.initializationError = 'AZURE_OPENAI_API_KEY no está configurada en las variables de entorno';
+                console.error('❌ Azure OpenAI Error:', this.initializationError);
                 this.openaiAvailable = false;
                 return;
             }
 
-            // Validar formato de la API key
-            if (!apiKey.startsWith('sk-') || apiKey.length < 40) {
-                this.initializationError = 'OPENAI_API_KEY tiene un formato inválido';
-                console.error('❌ OpenAI Error:', this.initializationError);
+            if (!endpoint) {
+                this.initializationError = 'AZURE_OPENAI_ENDPOINT no está configurado en las variables de entorno';
+                console.error('❌ Azure OpenAI Error:', this.initializationError);
                 this.openaiAvailable = false;
                 return;
             }
+
+            // Validar formato del endpoint
+            if (!endpoint.includes('openai.azure.com')) {
+                console.warn('⚠️ El endpoint no parece ser de Azure OpenAI');
+            }
             
-            console.log('🔑 Configurando cliente OpenAI...');
-            this.openai = new OpenAI({ 
+            console.log('🔑 Configurando cliente Azure OpenAI...');
+            
+            // Configuración específica para Azure OpenAI
+            this.openai = new OpenAI({
                 apiKey: apiKey,
-                organization: process.env.OPENAI_ORGANIZATION || undefined,
+                baseURL: `${endpoint}/openai/deployments/${deploymentName}`,
+                defaultQuery: { 'api-version': apiVersion },
+                defaultHeaders: {
+                    'Content-Type': 'application/json',
+                    'api-key': apiKey
+                },
                 timeout: 45000, // 45 segundos para respuestas complejas
                 maxRetries: 3   // 3 reintentos
             });
+
+            // Guardar información de deployment
+            this.deploymentName = deploymentName;
+            this.apiVersion = apiVersion;
             
             this.openaiAvailable = true;
             this.initialized = true;
             
-            console.log('✅ Cliente OpenAI configurado exitosamente');
+            console.log('✅ Cliente Azure OpenAI configurado exitosamente');
+            console.log(`🎯 Deployment: ${deploymentName}`);
+            console.log(`📅 API Version: ${apiVersion}`);
             
             // Test básico de conectividad (opcional)
             if (process.env.NODE_ENV !== 'production') {
@@ -90,29 +118,33 @@ class OpenAIService {
             }
             
         } catch (error) {
-            this.initializationError = `Error inicializando OpenAI: ${error.message}`;
-            console.error('❌ Error inicializando OpenAI:', error);
+            this.initializationError = `Error inicializando Azure OpenAI: ${error.message}`;
+            console.error('❌ Error inicializando Azure OpenAI:', error);
             this.openaiAvailable = false;
         }
     }
 
     /**
-     * ✅ Test de conectividad básico
+     * ✅ Test de conectividad básico con Azure OpenAI
      */
     async testConnection() {
         try {
-            console.log('🧪 Probando conectividad con OpenAI...');
+            console.log('🧪 Probando conectividad con Azure OpenAI...');
             
             const testResponse = await this.openai.chat.completions.create({
-                model: "gpt-4o-mini",
+                model: this.deploymentName, // Usar deployment name en lugar de model
                 messages: [{ role: "user", content: "Test" }],
                 max_tokens: 5,
                 temperature: 0
             });
             
             if (testResponse?.choices?.length > 0) {
-                console.log('✅ Test de conectividad OpenAI exitoso');
-                return { success: true, model: testResponse.model };
+                console.log('✅ Test de conectividad Azure OpenAI exitoso');
+                return { 
+                    success: true, 
+                    model: this.deploymentName,
+                    usage: testResponse.usage 
+                };
             } else {
                 console.warn('⚠️ Respuesta de test inválida');
                 return { success: false, error: 'Respuesta inválida' };
@@ -120,12 +152,22 @@ class OpenAIService {
             
         } catch (error) {
             console.warn('⚠️ Test de conectividad falló:', error.message);
+            
+            // Análisis específico de errores de Azure
+            if (error.message.includes('DeploymentNotFound')) {
+                console.error(`❌ Deployment "${this.deploymentName}" no encontrado`);
+            } else if (error.message.includes('InvalidApiVersion')) {
+                console.error(`❌ API Version "${this.apiVersion}" inválida`);
+            } else if (error.message.includes('Unauthorized')) {
+                console.error('❌ API Key inválida o sin permisos');
+            }
+            
             return { success: false, error: error.message };
         }
     }
 
     /**
-     * ✅ Definir herramientas disponibles
+     * ✅ Definir herramientas disponibles (sin cambios en la funcionalidad)
      */
     defineTools() {
         const tools = [
@@ -181,7 +223,6 @@ class OpenAIService {
                     }
                 }
             },
-            // ✅ NUEVA HERRAMIENTA: Consultar saldos del usuario
             {
                 type: "function",
                 function: {
@@ -274,12 +315,12 @@ class OpenAIService {
             }
         ];
 
-        console.log(`🛠️ ${tools.length} herramientas definidas para OpenAI (incluyendo consulta de saldos)`);
+        console.log(`🛠️ ${tools.length} herramientas definidas para Azure OpenAI (incluyendo consulta de saldos)`);
         return tools;
     }
 
     /**
-     * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con soporte para formato de conversación
+     * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con Azure OpenAI
      */
     async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
         try {
@@ -288,8 +329,8 @@ class OpenAIService {
             }
 
             if (!this.initialized) {
-                console.warn('⚠️ OpenAI no inicializado, reintentando...');
-                this.initializeOpenAI();
+                console.warn('⚠️ Azure OpenAI no inicializado, reintentando...');
+                this.initializeAzureOpenAI();
                 
                 if (!this.openaiAvailable) {
                     return this.createUnavailableResponse();
@@ -334,9 +375,9 @@ class OpenAIService {
             // ✅ AGREGAR: Mensaje actual del usuario
             mensajesParaIA.push({ role: "user", content: mensaje });
 
-            // ✅ Configuración inteligente del modelo
+            // ✅ Configuración para Azure OpenAI
             const requestConfig = {
-                model: this.selectBestModel(mensaje, userInfo),
+                model: this.deploymentName, // Usar deployment name
                 messages: mensajesParaIA,
                 temperature: this.calculateTemperature(mensaje),
                 max_tokens: this.calculateMaxTokens(mensaje),
@@ -351,11 +392,11 @@ class OpenAIService {
                 console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Habilitando herramientas para esta consulta`);
             }
 
-            console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Enviando a OpenAI (${requestConfig.model}, formato: ${usingOpenAIFormat ? 'OpenAI' : 'tradicional'})...`);
+            console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Enviando a Azure OpenAI (${requestConfig.model}, formato: ${usingOpenAIFormat ? 'OpenAI' : 'tradicional'})...`);
             const response = await this.openai.chat.completions.create(requestConfig);
             
             if (!response?.choices?.length) {
-                throw new Error('Respuesta vacía de OpenAI');
+                throw new Error('Respuesta vacía de Azure OpenAI');
             }
             
             const messageResponse = response.choices[0].message;
@@ -373,7 +414,7 @@ class OpenAIService {
             } else {
                 finalResponse = {
                     type: 'text',
-                    content: messageResponse.content || 'Respuesta vacía de OpenAI'
+                    content: messageResponse.content || 'Respuesta vacía de Azure OpenAI'
                 };
             }
 
@@ -384,14 +425,17 @@ class OpenAIService {
                 formatUsed: usingOpenAIFormat ? 'openai-conversation' : 'traditional-history',
                 messagesProcessed: mensajesParaIA.length,
                 modelUsed: requestConfig.model,
-                toolsUsed: !!messageResponse.tool_calls
+                toolsUsed: !!messageResponse.tool_calls,
+                azureDeployment: this.deploymentName,
+                apiVersion: this.apiVersion,
+                usage: response.usage // Información de uso de tokens
             };
             
             return finalResponse;
 
         } catch (error) {
             console.error('❌ Error en procesarMensaje:', error);
-            return this.manejarErrorOpenAI(error, userInfo);
+            return this.manejarErrorAzureOpenAI(error, userInfo);
         }
     }
 
@@ -430,46 +474,6 @@ class OpenAIService {
 
         Algunos ejemplos de la información que conoces son: consultas de saldos, procedimientos de retiro de ahorros, transferencias entre tipos de ahorro, tasas de interés para ahorros y préstamos, gestión de cuotas de ahorro, tipos de ahorro disponibles, horarios de operaciones, tipos de préstamos disponibles, lineamientos para préstamos, procedimientos para solicitar préstamos, préstamos hipotecarios, pagos de préstamos, guías de uso de APP y portal web, recuperación de facturas en garantía, liberación de hipotecas, préstamos con garantía de inversión, entre muchos otros servicios financieros.
 
-        CASOS DE USO ESPECÍFICOS:
-        
-        Para consultas de saldo: Cuando el usuario pregunte "¿Cuánto dinero tengo?" o similares, muestra saldo actual dividido en disponible y retenido.
-        
-        Para retiros de ahorros: Cuando el usuario pregunte "¿Qué necesito para retirar mi dinero?" o similares, proporciona el procedimiento completo para retiro de ahorros.
-        
-        Para transferencias entre tipos de ahorro: Cuando el usuario solicite "Quiero mover dinero de mi cuenta de ahorros a la cuenta a plazo fijo" o similares, muestra el procedimiento para transferencia entre ahorros.
-        
-        Para consultas de tasas de interés para ahorros: Cuando el usuario pregunte "¿Cuál es la tasa de interés para la cuenta de ahorro los diferentes plazo?" o similares, muestra tabla de tasas de interés vigente del mes.
-        
-        Para consultas de tasas de interés para préstamos: Cuando el usuario pregunte "¿Cuál es la tasa de interés para los préstamos?" o similares, muestra tabla de tasas de interés vigente del mes para préstamos y recuerda que es tasa revisable cada mes.
-        
-        Para gestión de cuotas de ahorros: Cuando el usuario pregunte "¿Cómo puedo cambiar el monto de mi cuota de ahorro programado?" o "¿Puedo reducir la cuota que estoy ahorrando cada mes?" o similares, muestra procedimiento de asignación de cuotas de ahorro.
-        
-        Para pago de préstamos con ahorro vista: Cuando el usuario pregunte "¿Puedo pagar mi préstamo con el saldo de mi cuenta de ahorro vista?" o similares, muestra procedimiento de transferencia de ahorros para pago a préstamo.
-        
-        Para tipos de ahorro disponibles: Cuando el usuario pregunte "¿Qué opciones de ahorro tengo disponibles?" o similares, muestra tabla de tipos de ahorro con plazos de vencimiento y tasas de interés vigente.
-        
-        Para horario de operaciones: Cuando el usuario pregunte "¿En qué horario puedo ver mis movimientos de retiro?" o "¿Los retiros se reflejan al instante o en cierto horario?" o similares, muestra tabla de horarios disponibles hábiles y en días festivos para disposición de ahorros por retiro y pago de préstamos.
-        
-        Para tipos de préstamos disponibles: Cuando el usuario pregunte "¿Qué opciones de préstamos tengo disponibles?" o similares, muestra tipos de préstamos.
-        
-        Para lineamientos generales para préstamos: Cuando el usuario pregunte "¿Cuáles son los requisitos para solicitar un préstamo?" o similares, muestra lineamiento para otorgar préstamo, con detalle de cálculo.
-        
-        Para procedimiento para solicitar un préstamo: Cuando el usuario pregunte "¿Cuáles son los pasos para solicitar un préstamo?" o similares, muestra los pasos para solicitar un préstamo, con detalle de cálculo.
-        
-        Para procedimiento para solicitar un préstamo hipotecario: Cuando el usuario pregunte "¿Cuáles son los pasos para solicitar un préstamo hipotecario?" o similares, muestra los pasos para solicitar un préstamo hipotecario, con detalle de cálculo.
-        
-        Para procedimiento para pagar un préstamo: Cuando el usuario pregunte "¿Puedo pagar el préstamo directamente desde mi cuenta bancaria? ¿Cómo se hace?" o similares, muestra los pasos para realizar pagos desde la cuenta bancaria relacionada al socio y proporciona cuenta y referencia bancaria.
-        
-        Para guía para uso de APP: Cuando el usuario pregunte "¿Tienen un manual o guía para usar la app?" o "Soy nuevo, ¿hay algún tutorial para aprender a usar la app?" o similares, muestra tutorial para uso de APP.
-        
-        Para guía para uso de página: Cuando el usuario pregunte "¿Tienen un manual o guía para usar la página de Nova?" o "Soy nuevo, ¿hay algún tutorial para aprender a usar la página de Nova?" o similares, muestra tutorial para uso de página web – portal.
-        
-        Para recuperación de factura por garantía de préstamos: Cuando el usuario pregunte "¿Qué necesito para recuperar una factura que dejé como garantía de mi préstamo?" o similares, muestra pasos a seguir para recuperar una factura en garantía.
-        
-        Para procedimiento para liberación de hipoteca: Cuando el usuario pregunte "¿Cuáles son los requisitos para liberar mi hipoteca?" o similares, muestra pasos a seguir la liberación de una hipoteca.
-        
-        Para procedimiento para préstamos con garantía de inversión: Cuando el usuario pregunte "¿Qué debo hacer si necesito retirar un ahorro antes de su vencimiento?" o "¿Puedo retirar mi ahorro antes de que se cumpla el plazo?" o "¿Qué pasa si quiero sacar mi dinero antes del vencimiento del ahorro?" o "¿Hay forma de hacer un retiro anticipado de mi ahorro a plazo?" o similares, muestra procedimiento de préstamos con garantía de inversión, formato para solicitud.
-
 🔷 **Contexto del Usuario:**
 ${userContext}
 
@@ -482,7 +486,7 @@ ${historial.length > 0 ?
   'Esta es una conversación nueva.'
 }
 
-🔷 **Tus Capacidades:**
+🔷 **Tus Capacidades (Azure OpenAI):**
 • Conversación natural e inteligente con memoria contextual
 • Consulta de saldos del usuario autenticado
 • Consulta de tasas de interés de Nova (herramienta especializada)
@@ -513,7 +517,7 @@ ${historial.length > 0 ?
             historial.forEach((item, index) => {
                 if (item.content && item.content.trim()) {
                     mensajes.push({
-                        role: item.role, // ya viene como 'user' o 'assistant'
+                        role: item.role,
                         content: item.content.trim()
                     });
                     console.log(`   ${index + 1}. ${item.role}: ${item.content.substring(0, 30)}...`);
@@ -525,7 +529,7 @@ ${historial.length > 0 ?
     }
 
     /**
-     * ✅ Procesamiento de herramientas con mejoras para análisis de conversación
+     * ✅ Procesamiento de herramientas con Azure OpenAI
      */
     async procesarHerramientas(messageResponse, mensajes, userToken, userInfo, conversationId) {
         const resultados = [];
@@ -563,7 +567,7 @@ ${historial.length > 0 ?
             }
         }
 
-        // ✅ Generar respuesta final con mejor contexto
+        // ✅ Generar respuesta final con Azure OpenAI
         const finalMessages = [
             ...mensajes,
             messageResponse,
@@ -577,7 +581,7 @@ ${historial.length > 0 ?
         console.log(`🔄 [${userInfo?.usuario || 'unknown'}] Generando respuesta final con resultados de herramientas...`);
         
         const finalResponse = await this.openai.chat.completions.create({
-            model: "gpt-4o-mini",
+            model: this.deploymentName, // Usar deployment name
             messages: finalMessages,
             temperature: 0.7,
             max_tokens: 3000

@@ -1594,6 +1594,6 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
 }
 
 // Crear instancia singleton
-const openaiService = new OpenAIService();
+const openaiService = new AzureOpenAIService();
 
 module.exports = openaiService;

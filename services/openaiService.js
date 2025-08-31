@@ -39,7 +39,7 @@ class AzureOpenAIService {
             apiKey: process.env.OPENAI_API_KEY,
             endpoint: process.env.OPENAI_ENDPOINT,
             region: 'eastus2', 
-            deploymentName: 'az-cajadeahorro-prod-openai',
+            deploymentName: 'gpt-4o-mini',
             apiVersion: '2024-02-01'
         };
 

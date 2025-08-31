@@ -1,4 +1,3 @@
-
 // services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI y formato de conversación
 const { OpenAI } = require('openai');
 const { DefaultAzureCredential } = require('@azure/identity');
@@ -40,7 +39,8 @@ class AzureOpenAIService {
             apiKey: process.env.OPENAI_API_KEY,
             endpoint: process.env.OPENAI_ENDPOINT,
             region: 'eastus2', 
-            deploymentName: 'gpt-4o-mini'
+            deploymentName: 'gpt-4o-mini',
+            apiVersion: '2024-02-01'
         };
 
         console.log('📊 Estado de configuración Azure:');
@@ -435,7 +435,7 @@ class AzureOpenAIService {
 
         } catch (error) {
             console.error('❌ Error en procesarMensaje:', error);
-            return this.manejarErrorAzureOpenAI(error, userInfo);
+            return this.manejarErrorOpenAI(error, userInfo);
         }
     }
 

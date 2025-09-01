@@ -1,5 +1,4 @@
-// services/documentService.js - Servicio de Azure Search con embeddings vectoriales
-
+// services/documentService.js - Servicio de Azure Search con embeddings vectoriales (Azure OpenAI listo)
 const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
 const OpenAI = require('openai');
 require('dotenv').config();
@@ -17,7 +16,11 @@ class DocumentService {
         this.searchAvailable = false;
         this.openaiAvailable = false;
         this.initializationError = null;
-        
+
+        // Flags/props adicionales
+        this.isAzureOpenAI = false;
+        this.embeddingModel = null;
+
         console.log('🔍 Inicializando Document Service...');
         this.initializeOpenAI();
         this.initializeAzureSearch();
@@ -29,27 +32,80 @@ class DocumentService {
     }
 
     /**
-     * Inicializa el cliente de OpenAI para embeddings
+     * Inicializa el cliente de OpenAI/Azure OpenAI para embeddings
+     * Soporta:
+     *  - Azure OpenAI (recomendado): usa endpoint + deployment + api-version
+     *  - OpenAI público: usa apiKey y modelo por defecto
+     *
+     * Variables soportadas (Azure):
+     *  - AZURE_OPENAI_ENDPOINT | OPENAI_ENDPOINT (ej: https://xxx-eastus2.openai.azure.com)
+     *  - AZURE_OPENAI_API_KEY | OPENAI_API_KEY
+     *  - AZURE_OPENAI_API_VERSION | OPENAI_API_VERSION (ej: 2024-12-01-preview)
+     *  - AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT | OPENAI_EMBEDDINGS_DEPLOYMENT | OPENAI_DEPLOYMENT (nombre del deployment)
+     *
+     * Variables soportadas (OpenAI público):
+     *  - OPENAI_API_KEY
+     *  - OPENAI_EMBEDDINGS_MODEL (default: text-embedding-3-large)
+     *  - OPENAI_EMBEDDINGS_DIMENSIONS (opcional)
      */
     initializeOpenAI() {
         try {
-            const apiKey = process.env.OPENAI_API_KEY;
-            
+            const endpoint =
+                process.env.OPENAI_ENDPOINT ||
+                null;
+
+            const apiKey =
+                process.env.OPENAI_API_KEY ||
+                null;
+
             if (!apiKey) {
-                console.warn('⚠️ OpenAI no configurado para embeddings en DocumentService');
+                console.warn('⚠️ OpenAI/Azure OpenAI no configurado para embeddings en DocumentService (falta API key)');
                 this.openaiAvailable = false;
                 return;
             }
-            
-            this.openai = new OpenAI({ 
-                apiKey,
-                timeout: 30000 // 30 segundos para embeddings
-            });
+
+            if (endpoint) {
+                // Modo Azure OpenAI
+                const apiVersion = '2024-12-01-preview';
+
+                const deploymentName = 'text-embedding-3-large';
+
+                // En Azure, el "model" debe ser el **nombre del deployment**
+                this.openai = new OpenAI({
+                    apiKey,
+                    baseURL: `${endpoint}/openai/deployments/${deploymentName}`,
+                    // Azure requiere api-key en header y api-version como query
+                    defaultHeaders: { 'api-key': apiKey },
+                    defaultQuery: { 'api-version': apiVersion },
+                    timeout: 30000
+                });
+
+                this.isAzureOpenAI = true;
+                this.embeddingModel = deploymentName;
+
+                console.log('✅ Azure OpenAI configurado para embeddings en DocumentService');
+                console.log('   Endpoint:', endpoint);
+                console.log('   Deployment:', deploymentName);
+                console.log('   API Version:', apiVersion);
+            } else {
+                // Modo OpenAI público
+                const model = process.env.OPENAI_EMBEDDINGS_MODEL || 'text-embedding-3-large';
+
+                this.openai = new OpenAI({
+                    apiKey,
+                    timeout: 30000
+                });
+
+                this.isAzureOpenAI = false;
+                this.embeddingModel = model;
+
+                console.log('✅ OpenAI público configurado para embeddings en DocumentService');
+                console.log('   Modelo:', model);
+            }
+
             this.openaiAvailable = true;
-            console.log('✅ OpenAI configurado para embeddings en DocumentService');
-            
         } catch (error) {
-            console.error('❌ Error inicializando OpenAI para DocumentService:', error);
+            console.error('❌ Error inicializando OpenAI/Azure OpenAI para DocumentService:', error);
             this.openaiAvailable = false;
             this.initializationError = error.message;
         }
@@ -107,15 +163,13 @@ class DocumentService {
     async testSearchConnection() {
         try {
             console.log('🧪 Probando conectividad con Azure Search...');
-            
-            // Realizar una búsqueda simple de prueba
             const testResults = await this.searchClient.search('*', { 
                 top: 1,
                 select: ['*']
             });
-            
+            // Recorrer para forzar la petición
+            for await (const _ of testResults.results) { /* no-op */ }
             console.log('✅ Test de conectividad Azure Search exitoso');
-            
         } catch (error) {
             console.warn('⚠️ Test de conectividad Azure Search falló:', error.message);
             if (error.statusCode === 403) {
@@ -139,26 +193,46 @@ class DocumentService {
 
             let vectorQuery = null;
             
-            // Intentar crear embedding si OpenAI está disponible
+            // Intentar crear embedding si OpenAI/Azure OpenAI está disponible
             if (this.openaiAvailable) {
                 try {
                     console.log(`🧠 [${userId}] Creando embedding para búsqueda vectorial...`);
-                    
-                    const embedding = await this.openai.embeddings.create({
-                        model: 'text-embedding-3-large',
-                        input: consulta,
-                        dimensions: 1024
-                    });
-                    
-                    console.log(`✅ [${userId}] Embedding creado con ${embedding.data[0].embedding.length} dimensiones`);
+
+                    const embReq = {
+                        model: this.embeddingModel, // En Azure: nombre del deployment; en OpenAI público: nombre del modelo
+                        input: consulta
+                    };
+
+                    // El parámetro "dimensions" a veces NO es aceptado por Azure dependiendo del modelo/deployment.
+                    // Para evitar errores, sólo lo pasamos si NO es Azure o si el usuario lo define explícitamente.
+                    const dimFromEnv = process.env.OPENAI_EMBEDDINGS_DIMENSIONS || process.env.AZURE_OPENAI_EMBEDDINGS_DIMENSIONS;
+                    if (dimFromEnv) {
+                        const dims = parseInt(dimFromEnv, 10);
+                        if (Number.isFinite(dims) && dims > 0) {
+                            embReq.dimensions = dims;
+                        }
+                    } else if (!this.isAzureOpenAI) {
+                        // En OpenAI público a veces sí queremos dimensiones (e.g., 1024)
+                        // Si dejaste 1024 fijo antes, puedes reactivarlo así:
+                        // embReq.dimensions = 1024;
+                    }
+
+                    const embedding = await this.openai.embeddings.create(embReq);
+                    const vector = embedding.data?.[0]?.embedding;
+
+                    if (!Array.isArray(vector)) {
+                        throw new Error('Embedding no retornó un vector válido');
+                    }
+
+                    console.log(`✅ [${userId}] Embedding creado con ${vector.length} dimensiones`);
                     
                     vectorQuery = {
-                        vector: embedding.data[0].embedding,
+                        vector,
                         kNearestNeighbors: 10,
-                        fields: 'Embedding'
+                        fields: 'Embedding' // Ajusta al nombre real de tu campo vector en el índice
                     };
                 } catch (embError) {
-                    console.warn(`⚠️ [${userId}] No se pudo crear embedding:`, embError.message);
+                    console.warn(`⚠️ [${userId}] No se pudo crear embedding: ${embError.message}`);
                 }
             }
             
@@ -170,7 +244,7 @@ class DocumentService {
                 queryType: 'full'
             };
             
-            // Agregar vector query si está disponible
+            // Agregar vector query si está disponible (vector + keyword = híbrida)
             if (vectorQuery) {
                 searchOptions.vectorQueries = [vectorQuery];
                 console.log(`🎯 [${userId}] Usando búsqueda vectorial + texto`);
@@ -191,10 +265,11 @@ class DocumentService {
                 console.log(`📄 [${userId}] Encontrado: ${doc.FileName} (score: ${score.toFixed(3)})`);
                 
                 // Limitar chunk a 300 caracteres para legibilidad
-                const chunk = doc.Chunk?.substring(0, 300) + (doc.Chunk?.length > 300 ? '...' : '');
+                const chunkSrc = doc.Chunk || '';
+                const chunk = chunkSrc.substring(0, 300) + (chunkSrc.length > 300 ? '...' : '');
                 
                 // Crear clave única para evitar duplicados
-                const documentKey = `${doc.FileName}-${doc.Chunk?.substring(0, 50)}`;
+                const documentKey = `${doc.FileName}-${chunkSrc.substring(0, 50)}`;
                 
                 if (!documentosProcesados.has(documentKey)) {
                     documentosProcesados.add(documentKey);
@@ -212,7 +287,7 @@ class DocumentService {
             if (resultados.length < 7) {
                 console.log(`⚠️ [${userId}] Solo ${resultados.length} resultados, intentando búsqueda amplia...`);
                 
-                const palabrasConsulta = consulta.split(' ');
+                const palabrasConsulta = (consulta || '').split(' ').filter(Boolean);
                 if (palabrasConsulta.length > 1) {
                     const consultaAmplia = palabrasConsulta[0];
                     console.log(`🔍 [${userId}] Búsqueda amplia: "${consultaAmplia}"`);
@@ -225,8 +300,9 @@ class DocumentService {
                     
                     for await (const result of searchResultsAmplia.results) {
                         const doc = result.document;
-                        const chunk = doc.Chunk?.substring(0, 300) + (doc.Chunk?.length > 300 ? '...' : '');
-                        const documentKey = `${doc.FileName}-${doc.Chunk?.substring(0, 50)}`;
+                        const chunkSrc = doc.Chunk || '';
+                        const chunk = chunkSrc.substring(0, 300) + (chunkSrc.length > 300 ? '...' : '');
+                        const documentKey = `${doc.FileName}-${chunkSrc.substring(0, 50)}`;
                         
                         if (!documentosProcesados.has(documentKey)) {
                             documentosProcesados.add(documentKey);
@@ -257,7 +333,7 @@ class DocumentService {
      * Formatea los resultados de búsqueda
      */
     formatearResultados(resultados, consulta, userId) {
-        if (resultados.length === 0) {
+        if (!Array.isArray(resultados) || resultados.length === 0) {
             return `🔍 **Búsqueda: "${consulta}"**\n\n` +
                    `❌ No se encontraron documentos relevantes.\n\n` +
                    `💡 **Sugerencias:**\n` +
@@ -348,17 +424,17 @@ class DocumentService {
         if (!contenido) return "Contenido no disponible";
 
         // Si hay highlights, usarlos
-        if (highlights && highlights.length > 0) {
+        if (Array.isArray(highlights) && highlights.length > 0) {
             return highlights.join(" ... ");
         }
 
         // Si no hay highlights, extraer contexto alrededor de las palabras clave
-        const palabrasClave = consulta.toLowerCase().split(' ').filter(p => p.length > 2);
-        const lineas = contenido.split('\n');
-        let lineasRelevantes = [];
+        const palabrasClave = (consulta || '').toLowerCase().split(' ').filter(p => p.length > 2);
+        const lineas = (contenido || '').split('\n');
+        const lineasRelevantes = [];
 
         for (const linea of lineas) {
-            const lineaLower = linea.toLowerCase();
+            const lineaLower = (linea || '').toLowerCase();
             if (palabrasClave.some(palabra => lineaLower.includes(palabra))) {
                 lineasRelevantes.push(linea.trim());
             }
@@ -378,14 +454,11 @@ class DocumentService {
     async buscarDocumentosGenerales(consulta, userId = 'unknown') {
         console.log(`📖 [${userId}] Búsqueda general de documentos: "${consulta}"`);
         
-        // Detectar si es una consulta específica
-        const consultaLower = consulta.toLowerCase();
+        const consultaLower = (consulta || '').toLowerCase();
         
         if (consultaLower.includes('política') || consultaLower.includes('politica')) {
-            // Extraer tipo de política
             const tiposPolitica = ['vacaciones', 'horario', 'vestimenta', 'conducta', 'seguridad', 'prestaciones'];
             const tipoPolitica = tiposPolitica.find(tipo => consultaLower.includes(tipo));
-            
             if (tipoPolitica) {
                 console.log(`🎯 [${userId}] Detectada consulta de política: ${tipoPolitica}`);
                 return await this.buscarPoliticas(tipoPolitica, userId);
@@ -393,10 +466,8 @@ class DocumentService {
         }
         
         if (consultaLower.includes('feriado') || consultaLower.includes('festivo')) {
-            // Extraer año si está presente
             const añoMatch = consulta.match(/\b(20\d{2})\b/);
-            const año = añoMatch ? parseInt(añoMatch[1]) : new Date().getFullYear();
-            
+            const año = añoMatch ? parseInt(añoMatch[1], 10) : new Date().getFullYear();
             console.log(`📅 [${userId}] Detectada consulta de feriados para ${año}`);
             return await this.obtenerDiasFeriados(año, userId);
         }
@@ -419,6 +490,7 @@ class DocumentService {
         return {
             searchAvailable: this.searchAvailable,
             openaiAvailable: this.openaiAvailable,
+            isAzureOpenAI: this.isAzureOpenAI,
             indexName: this.indexName || 'No configurado',
             error: this.initializationError,
             features: {
@@ -447,6 +519,7 @@ class DocumentService {
                 available: true,
                 searchAvailable: this.searchAvailable,
                 openaiAvailable: this.openaiAvailable,
+                isAzureOpenAI: this.isAzureOpenAI,
                 indexName: this.indexName,
                 features: this.getConfigInfo().features,
                 timestamp: new Date().toISOString()

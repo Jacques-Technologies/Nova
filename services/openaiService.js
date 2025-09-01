@@ -380,8 +380,7 @@ class AzureOpenAIService {
                 model: this.deploymentName, // Usar deployment name
                 messages: mensajesParaIA,
                 temperature: this.calculateTemperature(mensaje),
-                max_completion_tokens: this.calculateMaxTokens(mensaje),
-                frequency_penalty: 0.1
+                max_completion_tokens: this.calculateMaxTokens(mensaje)
             };
 
             // ✅ Usar herramientas solo cuando sea apropiado

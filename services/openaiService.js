@@ -39,8 +39,8 @@ class AzureOpenAIService {
             apiKey: process.env.OPENAI_API_KEY,
             endpoint: process.env.OPENAI_ENDPOINT,
             region: 'eastus2', 
-            deploymentName: 'gpt-4o-mini',
-            apiVersion: '2024-02-01'
+            deploymentName: 'gpt-5-mini',
+            apiVersion: '2024-12-01-preview'
         };
 
         console.log('📊 Estado de configuración Azure:');

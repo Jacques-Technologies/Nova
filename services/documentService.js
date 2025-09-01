@@ -34,9 +34,9 @@ class DocumentService {
     initializeOpenAI() {
         try {
             // Variables específicas para Azure OpenAI
-            const azureOpenaiEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-            const azureOpenaiKey = process.env.AZURE_OPENAI_API_KEY;
-            const azureOpenaiDeployment = process.env.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT || 'text-embedding-3-large';
+            const azureOpenaiEndpoint = process.env.OPENAI_ENDPOINT;
+            const azureOpenaiKey = process.env.OPENAI_API_KEY;
+            const azureOpenaiDeployment = 'text-embedding-3-large';
             
             // Variables para OpenAI público
             const openaiApiKey = process.env.OPENAI_API_KEY;
@@ -45,7 +45,7 @@ class DocumentService {
                 // ----- MODO AZURE OPENAI -----
                 console.log('🔧 Configurando Azure OpenAI...');
                 
-                const apiVersion = process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
+                const apiVersion =  '2024-02-15-preview';
 
                 // Corregir la construcción de baseURL
                 const baseURL = `${azureOpenaiEndpoint}/openai/deployments/${azureOpenaiDeployment}`;
@@ -73,7 +73,7 @@ class DocumentService {
                 // ----- MODO OPENAI PÚBLICO -----
                 console.log('🔧 Configurando OpenAI público...');
                 
-                const model = process.env.OPENAI_EMBEDDING_MODEL || 'text-embedding-3-large';
+                const model = 'text-embedding-3-large';
 
                 this.openaiClient = new OpenAI({
                     apiKey: openaiApiKey,
@@ -157,8 +157,8 @@ class DocumentService {
         try {
             const endpoint = process.env.AZURE_SEARCH_ENDPOINT;
             const apiKey = process.env.AZURE_SEARCH_API_KEY;
-            const indexName = process.env.AZURE_SEARCH_INDEX || 'nova';
-            const vectorField = process.env.AZURE_SEARCH_VECTOR_FIELD || 'Embedding';
+            const indexName = 'nova';
+            const vectorField = 'Embedding';
 
             console.log('🔍 Configuración Azure Search:', {
                 endpoint: endpoint ? `✅ ${endpoint}` : '❌ Faltante',

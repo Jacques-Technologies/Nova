@@ -1,5 +1,5 @@
 // services/documentService.js - CÓDIGO COMPLETO CORREGIDO
-const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
+const { SearchClient, SearchIndexClient, AzureKeyCredential } = require('@azure/search-documents');
 const OpenAI = require('openai');
 require('dotenv').config();
 
@@ -48,9 +48,16 @@ class DocumentService {
                 throw new Error('Variables de Azure Search faltantes (AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_API_KEY)');
             }
 
+            // Cliente para consultas (documentos)
             this.searchClient = new SearchClient(
                 endpoint,
                 indexName,
+                new AzureKeyCredential(apiKey)
+            );
+
+            // Cliente para administrar índices (estadísticas, etc.)
+            this.indexClient = new SearchIndexClient(
+                endpoint,
                 new AzureKeyCredential(apiKey)
             );
             
@@ -173,24 +180,27 @@ class DocumentService {
 
     /**
      * ✅ CORREGIDO: Test de conectividad Azure Search
+     * Usa SearchIndexClient.getIndexStatistics()
      */
     async testSearchConnection() {
         try {
             console.log('🧪 [DocumentService] Probando conectividad con Azure Search...');
             
-            const indexStats = await this.searchClient.getIndexStatistics();
+            // Estadísticas del índice (requiere SearchIndexClient)
+            const indexStats = await this.indexClient.getIndexStatistics(this.indexName);
             console.log('📊 Estadísticas del índice:', {
                 documentCount: indexStats.documentCount,
                 storageSize: indexStats.storageSize
             });
             
+            // Búsqueda simple para validar consulta
             const testResults = await this.searchClient.search('*', { 
                 top: 1,
                 select: ['FileName'],
                 includeTotalCount: true
             });
             
-            let totalCount = testResults.count || 0;
+            const totalCount = testResults.count ?? 0;
             console.log(`✅ [DocumentService] Azure Search conectado exitosamente`);
             console.log(`   Documentos en índice: ${totalCount}`);
             
@@ -208,6 +218,13 @@ class DocumentService {
             } else if (error.statusCode === 404) {
                 console.warn('   → Problema con el endpoint o nombre del índice');
             }
+
+            // Fallback: intenta al menos una búsqueda para validar conectividad básica
+            try {
+                const testResults = await this.searchClient.search('*', { top: 1 });
+                for await (const _ of testResults.results) { /* noop */ }
+                console.log('ℹ️ Conectividad de búsqueda básica OK (sin estadísticas)');
+            } catch (_) { /* ignore */ }
             
             return false;
         }
@@ -296,9 +313,10 @@ class DocumentService {
                     const vector = await this.createEmbedding(consulta);
                     
                     vectorQuery = {
-                        vector: vector,
-                        kNearestNeighbors: 15,
-                        fields: this.vectorField
+                        // ⚠️ Nombre vigente de la propiedad:
+                        kNearestNeighborsCount: 15,
+                        fields: this.vectorField,
+                        vector
                     };
                     
                     console.log(`✅ [${userId}] Vector query configurado (${vector.length}D) para campo '${this.vectorField}'`);
@@ -330,7 +348,7 @@ class DocumentService {
                 searchText: consulta,
                 hasVectorQuery: !!vectorQuery,
                 vectorField: this.vectorField,
-                kNearestNeighbors: vectorQuery?.kNearestNeighbors,
+                kNearestNeighborsCount: vectorQuery?.kNearestNeighborsCount,
                 top: searchOptions.top
             });
             
@@ -399,7 +417,7 @@ class DocumentService {
             console.log(`🔄 [${userId}] Ejecutando búsqueda ampliada...`);
             
             // Términos más generales
-            const palabras = consulta.split(' ').filter(p => p.length > 2);
+            const palabras = (consulta || '').split(' ').filter(p => p.length > 2);
             const consultaAmplia = palabras.length > 0 ? palabras[0] : '*';
             
             const searchResults = await this.searchClient.search(consultaAmplia, {
@@ -531,7 +549,6 @@ class DocumentService {
         if (resultado.includes("No se encontraron documentos")) {
             return await this.buscarDocumentos("días feriados festivos oficiales política", userId);
         }
-        
         return resultado;
     }
 
@@ -584,7 +601,7 @@ class DocumentService {
         // Test Azure Search
         if (this.searchAvailable) {
             try {
-                const stats = await this.searchClient.getIndexStatistics();
+                const stats = await this.indexClient.getIndexStatistics(this.indexName);
                 diagnostico.tests.azureSearch = {
                     success: true,
                     documentCount: stats.documentCount,
@@ -676,7 +693,7 @@ class DocumentService {
 
             if (this.searchAvailable) {
                 try {
-                    const indexStats = await this.searchClient.getIndexStatistics();
+                    const indexStats = await this.indexClient.getIndexStatistics(this.indexName);
                     stats.indexStats = {
                         documentCount: indexStats.documentCount,
                         storageSize: indexStats.storageSize

@@ -89,7 +89,7 @@ class DocumentService {
                 console.log('   API Version:', apiVersion);
             } else {
                 // Modo OpenAI público
-                const model = process.env.OPENAI_EMBEDDINGS_MODEL || 'text-embedding-3-large';
+                const model = 'text-embedding-3-large';
 
                 this.openai = new OpenAI({
                     apiKey,
@@ -116,9 +116,9 @@ class DocumentService {
      */
     initializeAzureSearch() {
         try {
-            const endpoint = process.env.AZURE_SEARCH_ENDPOINT || process.env.SERVICE_ENDPOINT;
-            const apiKey = process.env.AZURE_SEARCH_API_KEY || process.env.API_KEY;
-            const indexName = process.env.AZURE_SEARCH_INDEX_NAME || process.env.INDEX_NAME || 'alfa_bot';
+            const endpoint = process.env.AZURE_SEARCH_ENDPOINT;
+            const apiKey = process.env.AZURE_SEARCH_API_KEY;
+            const indexName = 'nova'
 
             console.log('🔍 Configuración Azure Search:', {
                 endpoint: endpoint ? '✅ Configurado' : '❌ Faltante',
@@ -205,7 +205,7 @@ class DocumentService {
 
                     // El parámetro "dimensions" a veces NO es aceptado por Azure dependiendo del modelo/deployment.
                     // Para evitar errores, sólo lo pasamos si NO es Azure o si el usuario lo define explícitamente.
-                    const dimFromEnv = process.env.OPENAI_EMBEDDINGS_DIMENSIONS || process.env.AZURE_OPENAI_EMBEDDINGS_DIMENSIONS;
+                    const dimFromEnv = 1024
                     if (dimFromEnv) {
                         const dims = parseInt(dimFromEnv, 10);
                         if (Number.isFinite(dims) && dims > 0) {

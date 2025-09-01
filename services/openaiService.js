@@ -381,7 +381,6 @@ class AzureOpenAIService {
                 messages: mensajesParaIA,
                 temperature: this.calculateTemperature(mensaje),
                 max_completion_tokens: this.calculateMaxTokens(mensaje),
-                presence_penalty: 0.1,
                 frequency_penalty: 0.1
             };
 

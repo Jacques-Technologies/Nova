@@ -1,4 +1,5 @@
-// services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI y formato de conversación
+
+// services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI, formato de conversación y tracking de tokens
 const { OpenAI } = require('openai');
 const { DefaultAzureCredential } = require('@azure/identity');
 const { DateTime } = require('luxon');
@@ -8,25 +9,42 @@ const cosmosService = require('./cosmosService');
 require('dotenv').config();
 
 /**
- * Servicio Azure OpenAI MEJORADO con soporte para formato de conversación
+ * Servicio Azure OpenAI MEJORADO con tracking completo de tokens
  * - Integración completa con Azure OpenAI Service
  * - Mantiene compatibilidad con historial tradicional
  * - Aprovecha formato de conversación cuando está disponible
  * - Guardado automático en formato OpenAI
  * - Consulta de saldos Nova
+ * - Tracking detallado de consumo de tokens
+ * - Estadísticas de uso por usuario y conversación
  */
 class AzureOpenAIService {
     constructor() {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando Azure OpenAI Service con soporte para formato de conversación...');
+        // ✅ NUEVO: Sistema de tracking de tokens
+        this.tokenUsage = {
+            total: {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0
+            },
+            byUser: new Map(),
+            byModel: new Map(),
+            byTool: new Map(),
+            sessions: [],
+            startTime: new Date()
+        };
+        
+        console.log('🚀 Inicializando Azure OpenAI Service con tracking de tokens...');
         this.diagnoseConfiguration();
         this.initializeAzureOpenAI();
         this.tools = this.defineTools();
         
         console.log(`✅ Azure OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
         console.log(`🔗 Formato de conversación: ${cosmosService.isAvailable() ? 'Disponible' : 'No disponible'}`);
+        console.log(`📊 Tracking de tokens: Habilitado`);
     }
 
     /**
@@ -139,6 +157,12 @@ class AzureOpenAIService {
             });
             
             if (testResponse?.choices?.length > 0) {
+                // ✅ NUEVO: Registrar tokens del test
+                if (testResponse.usage) {
+                    this.trackTokenUsage(testResponse.usage, 'test', 'system');
+                    console.log(`📊 Test tokens: ${testResponse.usage.total_tokens}`);
+                }
+                
                 console.log('✅ Test de conectividad Azure OpenAI exitoso');
                 return { 
                     success: true, 
@@ -163,6 +187,199 @@ class AzureOpenAIService {
             }
             
             return { success: false, error: error.message };
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Tracking de uso de tokens
+     */
+    trackTokenUsage(usage, operationType, userId = 'unknown', model = null) {
+        try {
+            if (!usage || typeof usage !== 'object') {
+                console.warn('⚠️ Datos de usage inválidos:', usage);
+                return;
+            }
+
+            const tokenData = {
+                prompt_tokens: usage.prompt_tokens || 0,
+                completion_tokens: usage.completion_tokens || 0,
+                total_tokens: usage.total_tokens || 0,
+                timestamp: new Date(),
+                operationType,
+                userId,
+                model: model || this.deploymentName
+            };
+
+            // Actualizar totales generales
+            this.tokenUsage.total.prompt_tokens += tokenData.prompt_tokens;
+            this.tokenUsage.total.completion_tokens += tokenData.completion_tokens;
+            this.tokenUsage.total.total_tokens += tokenData.total_tokens;
+
+            // Tracking por usuario
+            if (!this.tokenUsage.byUser.has(userId)) {
+                this.tokenUsage.byUser.set(userId, {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    requests: 0,
+                    firstRequest: new Date(),
+                    lastRequest: new Date()
+                });
+            }
+
+            const userData = this.tokenUsage.byUser.get(userId);
+            userData.prompt_tokens += tokenData.prompt_tokens;
+            userData.completion_tokens += tokenData.completion_tokens;
+            userData.total_tokens += tokenData.total_tokens;
+            userData.requests++;
+            userData.lastRequest = new Date();
+
+            // Tracking por modelo
+            const modelKey = tokenData.model;
+            if (!this.tokenUsage.byModel.has(modelKey)) {
+                this.tokenUsage.byModel.set(modelKey, {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    requests: 0
+                });
+            }
+
+            const modelData = this.tokenUsage.byModel.get(modelKey);
+            modelData.prompt_tokens += tokenData.prompt_tokens;
+            modelData.completion_tokens += tokenData.completion_tokens;
+            modelData.total_tokens += tokenData.total_tokens;
+            modelData.requests++;
+
+            // Tracking por herramienta/operación
+            if (!this.tokenUsage.byTool.has(operationType)) {
+                this.tokenUsage.byTool.set(operationType, {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                    requests: 0
+                });
+            }
+
+            const toolData = this.tokenUsage.byTool.get(operationType);
+            toolData.prompt_tokens += tokenData.prompt_tokens;
+            toolData.completion_tokens += tokenData.completion_tokens;
+            toolData.total_tokens += tokenData.total_tokens;
+            toolData.requests++;
+
+            // Guardar sesión individual
+            this.tokenUsage.sessions.push(tokenData);
+
+            // Limitar historial de sesiones (últimas 1000)
+            if (this.tokenUsage.sessions.length > 1000) {
+                this.tokenUsage.sessions = this.tokenUsage.sessions.slice(-1000);
+            }
+
+            console.log(`📊 [${userId}] Tokens registrados: ${tokenData.total_tokens} (${operationType})`);
+            console.log(`📈 [${userId}] Total acumulado: ${userData.total_tokens} tokens en ${userData.requests} requests`);
+
+        } catch (error) {
+            console.error('❌ Error tracking tokens:', error);
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Obtener estadísticas de tokens
+     */
+    getTokenStatistics(userId = null) {
+        try {
+            const now = new Date();
+            const uptime = Math.round((now - this.tokenUsage.startTime) / 1000 / 60); // minutos
+
+            let stats = {
+                service: {
+                    uptime_minutes: uptime,
+                    start_time: this.tokenUsage.startTime,
+                    total_requests: this.tokenUsage.sessions.length
+                },
+                total: { ...this.tokenUsage.total },
+                models: Object.fromEntries(this.tokenUsage.byModel),
+                operations: Object.fromEntries(this.tokenUsage.byTool),
+                cost_estimate: this.calculateCostEstimate(this.tokenUsage.total)
+            };
+
+            // Si se solicita un usuario específico
+            if (userId && this.tokenUsage.byUser.has(userId)) {
+                stats.user = {
+                    ...this.tokenUsage.byUser.get(userId),
+                    cost_estimate: this.calculateCostEstimate(this.tokenUsage.byUser.get(userId))
+                };
+            } else if (userId) {
+                stats.user = {
+                    message: `No hay estadísticas registradas para el usuario: ${userId}`
+                };
+            }
+
+            // Top usuarios (sin datos sensibles)
+            if (!userId) {
+                const topUsers = Array.from(this.tokenUsage.byUser.entries())
+                    .sort(([,a], [,b]) => b.total_tokens - a.total_tokens)
+                    .slice(0, 5)
+                    .map(([user, data]) => ({
+                        user: user.substring(0, 3) + '***', // Anonimizar
+                        total_tokens: data.total_tokens,
+                        requests: data.requests
+                    }));
+                
+                stats.top_users = topUsers;
+            }
+
+            return stats;
+
+        } catch (error) {
+            console.error('❌ Error obteniendo estadísticas de tokens:', error);
+            return { error: error.message };
+        }
+    }
+
+    /**
+     * ✅ NUEVO: Calcular estimación de costo
+     */
+    calculateCostEstimate(tokenData) {
+        try {
+            // Precios aproximados Azure OpenAI (USD por 1K tokens)
+            const pricing = {
+                'gpt-4o-mini': {
+                    input: 0.000150,  // $0.15 per 1K input tokens
+                    output: 0.000600  // $0.60 per 1K output tokens
+                },
+                'gpt-4': {
+                    input: 0.03,
+                    output: 0.06
+                },
+                default: {
+                    input: 0.001,
+                    output: 0.002
+                }
+            };
+
+            const model = this.deploymentName.toLowerCase().includes('mini') ? 'gpt-4o-mini' : 
+                         this.deploymentName.toLowerCase().includes('gpt-4') ? 'gpt-4' : 'default';
+
+            const rates = pricing[model];
+            
+            const inputCost = (tokenData.prompt_tokens / 1000) * rates.input;
+            const outputCost = (tokenData.completion_tokens / 1000) * rates.output;
+            const totalCost = inputCost + outputCost;
+
+            return {
+                model: model,
+                input_cost_usd: parseFloat(inputCost.toFixed(6)),
+                output_cost_usd: parseFloat(outputCost.toFixed(6)),
+                total_cost_usd: parseFloat(totalCost.toFixed(6)),
+                input_tokens: tokenData.prompt_tokens,
+                output_tokens: tokenData.completion_tokens,
+                total_tokens: tokenData.total_tokens
+            };
+
+        } catch (error) {
+            console.error('❌ Error calculando costo:', error);
+            return { error: error.message };
         }
     }
 

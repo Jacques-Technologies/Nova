@@ -1,6 +1,5 @@
-// services/documentService.js - Servicio de Azure Search con embeddings vectoriales (Azure OpenAI corregido)
+// services/documentService.js - Servicio de Azure Search con embeddings vectoriales (sin @azure/openai)
 const { SearchClient, AzureKeyCredential } = require('@azure/search-documents');
-const { OpenAIClient, AzureKeyCredential: OpenAIKeyCredential } = require('@azure/openai');
 const OpenAI = require('openai');
 require('dotenv').config();
 
@@ -45,7 +44,7 @@ class DocumentService {
             const openaiApiKey = process.env.OPENAI_API_KEY;
 
             if (azureEndpoint && azureApiKey) {
-                // ----- MODO AZURE OPENAI -----
+                // ----- MODO AZURE OPENAI (usando cliente OpenAI genérico) -----
                 console.log('🔧 Configurando Azure OpenAI...');
                 
                 const apiVersion = process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
@@ -55,17 +54,19 @@ class DocumentService {
                     throw new Error('Falta AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT');
                 }
 
-                // Usar el cliente oficial de Azure OpenAI
-                this.openaiClient = new OpenAIClient(
-                    azureEndpoint,
-                    new OpenAIKeyCredential(azureApiKey),
-                    {
-                        apiVersion: apiVersion
-                    }
-                );
+                // Usar cliente OpenAI configurado para Azure
+                this.openaiClient = new OpenAI({
+                    apiKey: azureApiKey,
+                    baseURL: `${azureEndpoint}/openai/deployments/${deploymentName}`,
+                    defaultQuery: { 'api-version': apiVersion },
+                    defaultHeaders: {
+                        'api-key': azureApiKey,
+                    },
+                    timeout: 30000
+                });
 
                 this.isAzureOpenAI = true;
-                this.embeddingModel = deploymentName;
+                this.embeddingModel = deploymentName; // En Azure, el modelo es el deployment
 
                 console.log('✅ Azure OpenAI configurado correctamente');
                 console.log('   Endpoint:', azureEndpoint);
@@ -110,29 +111,41 @@ class DocumentService {
     async testEmbeddingConnection() {
         try {
             console.log('🧪 Probando conectividad con servicio de embeddings...');
-            const testText = 'test';
+            const testText = 'test connectivity';
             
-            if (this.isAzureOpenAI) {
-                const result = await this.openaiClient.getEmbeddings(this.embeddingModel, [testText]);
-                if (result?.data?.[0]?.embedding) {
-                    console.log('✅ Test de Azure OpenAI embeddings exitoso');
-                } else {
-                    throw new Error('Respuesta inválida del servicio de embeddings');
+            // Para ambos casos (Azure y público) usamos la misma interfaz
+            const embeddingRequest = {
+                model: this.embeddingModel,
+                input: testText
+            };
+
+            // Solo agregar dimensiones para OpenAI público si está configurado
+            if (!this.isAzureOpenAI) {
+                const dimensions = process.env.OPENAI_EMBEDDINGS_DIMENSIONS;
+                if (dimensions) {
+                    const d = parseInt(dimensions, 10);
+                    if (Number.isFinite(d) && d > 0) {
+                        embeddingRequest.dimensions = d;
+                    }
                 }
+            }
+
+            const result = await this.openaiClient.embeddings.create(embeddingRequest);
+            
+            if (result?.data?.[0]?.embedding) {
+                const vectorLength = result.data[0].embedding.length;
+                console.log(`✅ Test de ${this.isAzureOpenAI ? 'Azure OpenAI' : 'OpenAI'} embeddings exitoso (${vectorLength} dimensiones)`);
             } else {
-                const result = await this.openaiClient.embeddings.create({
-                    model: this.embeddingModel,
-                    input: testText
-                });
-                if (result?.data?.[0]?.embedding) {
-                    console.log('✅ Test de OpenAI embeddings exitoso');
-                } else {
-                    throw new Error('Respuesta inválida del servicio de embeddings');
-                }
+                throw new Error('Respuesta inválida del servicio de embeddings');
             }
         } catch (error) {
             console.warn('⚠️ Test de embeddings falló:', error.message);
-            // No marcamos como no disponible, solo advertimos
+            console.warn('   Detalles del error:', {
+                status: error.status,
+                code: error.code,
+                type: error.type,
+                message: error.message
+            });
         }
     }
 
@@ -147,7 +160,7 @@ class DocumentService {
             const vectorField = process.env.AZURE_SEARCH_VECTOR_FIELD || 'Embedding';
 
             console.log('🔍 Configuración Azure Search:', {
-                endpoint: endpoint ? '✅ Configurado' : '❌ Faltante',
+                endpoint: endpoint ? `✅ ${endpoint.substring(0, 30)}...` : '❌ Faltante',
                 apiKey: apiKey ? '✅ Configurado' : '❌ Faltante',
                 indexName,
                 vectorField
@@ -168,7 +181,6 @@ class DocumentService {
             this.searchAvailable = true;
             
             console.log(`✅ Azure Search configurado correctamente`);
-            console.log(`   Endpoint: ${endpoint}`);
             console.log(`   Index: ${indexName}`);
             console.log(`   Vector Field: ${vectorField}`);
             
@@ -190,7 +202,7 @@ class DocumentService {
             console.log('🧪 Probando conectividad con Azure Search...');
             const testResults = await this.searchClient.search('*', { 
                 top: 1,
-                select: ['*']
+                select: ['FileName'] // Solo seleccionar un campo básico para el test
             });
             
             // Forzar la ejecución de la consulta
@@ -200,7 +212,8 @@ class DocumentService {
                 break; // Solo necesitamos uno para el test
             }
             
-            console.log(`✅ Test de conectividad Azure Search exitoso (${count} documento de prueba)`);
+            console.log(`✅ Test de conectividad Azure Search exitoso`);
+            console.log(`   Índice accesible con ${count > 0 ? 'datos' : 'estructura válida'}`);
         } catch (error) {
             console.warn('⚠️ Test de conectividad Azure Search falló:', error.message);
             
@@ -209,7 +222,13 @@ class DocumentService {
             } else if (error.statusCode === 404) {
                 console.warn('   → Problema con el endpoint o nombre del índice');
             } else if (error.code === 'ENOTFOUND') {
-                console.warn('   → No se puede resolver el endpoint');
+                console.warn('   → No se puede resolver el endpoint DNS');
+            } else {
+                console.warn('   → Error detallado:', {
+                    status: error.statusCode,
+                    code: error.code,
+                    message: error.message
+                });
             }
         }
     }
@@ -223,42 +242,38 @@ class DocumentService {
         }
 
         try {
-            if (this.isAzureOpenAI) {
-                // Usar cliente oficial de Azure OpenAI
-                const result = await this.openaiClient.getEmbeddings(this.embeddingModel, [text]);
-                
-                if (!result?.data?.[0]?.embedding) {
-                    throw new Error('No se recibió embedding válido de Azure OpenAI');
-                }
-                
-                return result.data[0].embedding;
-                
-            } else {
-                // Usar cliente de OpenAI público
-                const embReq = {
-                    model: this.embeddingModel,
-                    input: text
-                };
+            const embeddingRequest = {
+                model: this.embeddingModel,
+                input: text.trim()
+            };
 
-                // Agregar dimensiones si está configurado
+            // Solo agregar dimensiones para OpenAI público si está configurado
+            if (!this.isAzureOpenAI) {
                 const dimensions = process.env.OPENAI_EMBEDDINGS_DIMENSIONS;
                 if (dimensions) {
                     const d = parseInt(dimensions, 10);
                     if (Number.isFinite(d) && d > 0) {
-                        embReq.dimensions = d;
+                        embeddingRequest.dimensions = d;
                     }
                 }
-
-                const result = await this.openaiClient.embeddings.create(embReq);
-                
-                if (!result?.data?.[0]?.embedding) {
-                    throw new Error('No se recibió embedding válido de OpenAI');
-                }
-                
-                return result.data[0].embedding;
             }
+
+            console.log(`🧠 Creando embedding con ${this.isAzureOpenAI ? 'Azure OpenAI' : 'OpenAI público'}...`);
+            const result = await this.openaiClient.embeddings.create(embeddingRequest);
+            
+            if (!result?.data?.[0]?.embedding) {
+                throw new Error('No se recibió embedding válido');
+            }
+            
+            return result.data[0].embedding;
+                
         } catch (error) {
-            console.error('❌ Error creando embedding:', error.message);
+            console.error('❌ Error creando embedding:', {
+                message: error.message,
+                status: error.status,
+                code: error.code,
+                type: error.type
+            });
             throw new Error(`Error creando embedding: ${error.message}`);
         }
     }
@@ -436,8 +451,11 @@ class DocumentService {
             }
         });
 
-        const hasVectorSearch = this.openaiAvailable ? ' con búsqueda vectorial' : '';
-        respuesta += `\n\n💡 **Búsqueda realizada${hasVectorSearch}**`;
+        const searchType = this.openaiAvailable ? 
+            (this.isAzureOpenAI ? 'Azure OpenAI' : 'OpenAI') + ' + Azure Search' : 
+            'Azure Search';
+            
+        respuesta += `\n\n💡 **Búsqueda realizada con ${searchType}**`;
         respuesta += `\n¿Necesitas más información sobre algún documento específico?`;
         
         return respuesta;

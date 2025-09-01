@@ -9,11 +9,11 @@ const cosmosService = require('./cosmosService');
 require('dotenv').config();
 
 /**
- * Servicio Azure OpenAI con tracking de tokens (SOLO gpt-5.1-mini)
- * - Integración exclusiva con el deployment gpt-5.1-mini en Azure OpenAI
+ * Servicio Azure OpenAI con tracking de tokens (SOLO gpt-5-mini)
+ * - Integración exclusiva con el deployment gpt-5-mini en Azure OpenAI
  * - Historial tradicional y formato de conversación compatibles
  * - Guardado automático en formato OpenAI (si usas cosmosService)
- * - Estadísticas y estimación de costos para gpt-5.1-mini
+ * - Estadísticas y estimación de costos para gpt-5-mini
  */
 class AzureOpenAIService {
   constructor() {
@@ -30,7 +30,7 @@ class AzureOpenAIService {
       startTime: new Date()
     };
 
-    console.log('🚀 Inicializando Azure OpenAI Service (exclusivo gpt-5.1-mini) con tracking de tokens...');
+    console.log('🚀 Inicializando Azure OpenAI Service (exclusivo gpt-5-mini) con tracking de tokens...');
     this.diagnoseConfiguration();
     this.initializeAzureOpenAI();
     this.tools = this.defineTools?.() || [];
@@ -41,11 +41,11 @@ class AzureOpenAIService {
   }
 
   /**
-   * Metadatos del modelo gpt-5.1-mini centralizados
+   * Metadatos del modelo gpt-5-mini centralizados
    */
   getModelInfo() {
     return {
-      modelId: 'gpt-5.1-mini',
+      modelId: 'gpt-5-mini',
       description: 'Reasoning + Chat Completions + Responses + Herramientas + Texto/Imagen (entrada) → Texto/Imagen',
       // Context Window total y límites típicos (según especificación del usuario)
       contextWindow: 400_000,
@@ -56,23 +56,23 @@ class AzureOpenAIService {
   }
 
   /**
-   * Diagnóstico y configuración (exclusivo gpt-5.1-mini)
+   * Diagnóstico y configuración (exclusivo gpt-5-mini)
    */
   diagnoseConfiguration() {
-    console.log('🔍 Diagnosticando configuración Azure OpenAI (solo gpt-5.1-mini)...');
+    console.log('🔍 Diagnosticando configuración Azure OpenAI (solo gpt-5-mini)...');
 
     const config = {
       apiKey: process.env.OPENAI_API_KEY,
       endpoint: process.env.OPENAI_ENDPOINT,
       // Deployment: puedes sobreescribir con AZURE_OPENAI_DEPLOYMENT; por defecto usamos el nombre del modelo
-      deploymentName: 'gpt-5.1-mini',
+      deploymentName: 'gpt-5-mini',
       apiVersion: '2024-12-01-preview'
     };
 
-    // Validación dura: sólo permitimos gpt-5.1-mini
-    if (config.deploymentName !== 'gpt-5.1-mini') {
-      console.warn(`⚠️ Se forzará el deployment a 'gpt-5.1-mini' (valor actual: "${config.deploymentName}").`);
-      config.deploymentName = 'gpt-5.1-mini';
+    // Validación dura: sólo permitimos gpt-5-mini
+    if (config.deploymentName !== 'gpt-5-mini') {
+      console.warn(`⚠️ Se forzará el deployment a 'gpt-5-mini' (valor actual: "${config.deploymentName}").`);
+      config.deploymentName = 'gpt-5-mini';
     }
 
     console.log('📊 Estado de configuración Azure:');
@@ -92,7 +92,7 @@ class AzureOpenAIService {
   }
 
   /**
-   * Inicialización del cliente Azure OpenAI (solo gpt-5.1-mini)
+   * Inicialización del cliente Azure OpenAI (solo gpt-5-mini)
    */
   initializeAzureOpenAI() {
     try {
@@ -116,7 +116,7 @@ class AzureOpenAIService {
         console.warn('⚠️ El endpoint no parece ser de Azure OpenAI');
       }
 
-      console.log('🔑 Configurando cliente Azure OpenAI (gpt-5.1-mini)...');
+      console.log('🔑 Configurando cliente Azure OpenAI (gpt-5-mini)...');
 
       // Config de cliente OpenAI para Azure (ruta de deployments)
       this.openai = new OpenAI({
@@ -156,11 +156,11 @@ class AzureOpenAIService {
   }
 
   /**
-   * Test básico de conectividad (gpt-5.1-mini)
+   * Test básico de conectividad (gpt-5-mini)
    */
   async testConnection() {
     try {
-      console.log('🧪 Probando conectividad con Azure OpenAI (gpt-5.1-mini)...');
+      console.log('🧪 Probando conectividad con Azure OpenAI (gpt-5-mini)...');
 
       const testResponse = await this.openai.chat.completions.create({
         model: this.deploymentName, // deploymentName en Azure
@@ -229,7 +229,7 @@ class AzureOpenAIService {
       userData.requests++;
       userData.lastRequest = new Date();
 
-      // Por modelo (solo gpt-5.1-mini, pero mantenemos estructura)
+      // Por modelo (solo gpt-5-mini, pero mantenemos estructura)
       const modelKey = tokenData.model;
       if (!this.tokenUsage.byModel.has(modelKey)) {
         this.tokenUsage.byModel.set(modelKey, {
@@ -321,7 +321,7 @@ class AzureOpenAIService {
   }
 
   /**
-   * Estimación de costo (SOLO gpt-5.1-mini)
+   * Estimación de costo (SOLO gpt-5-mini)
    * Puedes ajustar precios con:
    *  - GPT51_MINI_PRICE_INPUT_PER_1K (USD por 1K tokens de entrada)
    *  - GPT51_MINI_PRICE_OUTPUT_PER_1K (USD por 1K tokens de salida)

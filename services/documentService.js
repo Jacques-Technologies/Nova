@@ -39,8 +39,8 @@ class DocumentService {
     initializeOpenAI() {
         try {
             // Detectar modo Azure vs público
-            const azureEndpoint = process.env.AZURE_OPENAI_ENDPOINT;
-            const azureApiKey = process.env.AZURE_OPENAI_API_KEY;
+            const azureEndpoint = process.env.AZURE_SEARCH_ENDPOINT;
+            const azureApiKey = process.env.AZURE_SEARCH_API_KEY;
             const openaiApiKey = process.env.OPENAI_API_KEY;
 
             if (azureEndpoint && azureApiKey) {
@@ -77,7 +77,7 @@ class DocumentService {
                 // ----- MODO OPENAI PÚBLICO -----
                 console.log('🔧 Configurando OpenAI público...');
                 
-                const model = process.env.OPENAI_EMBEDDINGS_MODEL || 'text-embedding-3-large';
+                const model = 'text-embedding-3-large';
 
                 this.openaiClient = new OpenAI({
                     apiKey: openaiApiKey,
@@ -121,7 +121,7 @@ class DocumentService {
 
             // Solo agregar dimensiones para OpenAI público si está configurado
             if (!this.isAzureOpenAI) {
-                const dimensions = process.env.OPENAI_EMBEDDINGS_DIMENSIONS;
+                const dimensions = 1024;
                 if (dimensions) {
                     const d = parseInt(dimensions, 10);
                     if (Number.isFinite(d) && d > 0) {
@@ -249,7 +249,7 @@ class DocumentService {
 
             // Solo agregar dimensiones para OpenAI público si está configurado
             if (!this.isAzureOpenAI) {
-                const dimensions = process.env.OPENAI_EMBEDDINGS_DIMENSIONS;
+                const dimensions = 1024;
                 if (dimensions) {
                     const d = parseInt(dimensions, 10);
                     if (Number.isFinite(d) && d > 0) {

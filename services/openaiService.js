@@ -583,7 +583,7 @@ ${historial.length > 0 ?
         const finalResponse = await this.openai.chat.completions.create({
             model: this.deploymentName, // Usar deployment name
             messages: finalMessages,
-            temperature: 0.7,
+            temperature: 1.0,
             max_completion_tokens: 3000
         });
 
@@ -1466,7 +1466,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
         }
         
         // Temperatura media por defecto
-        return 0.7;
+        return 1.0;
     }
 
     calculateMaxTokens(mensaje) {

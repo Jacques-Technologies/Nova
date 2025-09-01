@@ -1,5 +1,4 @@
-
-// services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI, formato de conversación y tracking de tokens
+// services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI y formato de conversación
 const { OpenAI } = require('openai');
 const { DefaultAzureCredential } = require('@azure/identity');
 const { DateTime } = require('luxon');
@@ -9,354 +8,163 @@ const cosmosService = require('./cosmosService');
 require('dotenv').config();
 
 /**
- * Servicio Azure OpenAI con tracking de tokens (SOLO gpt-5-mini)
- * - Integración exclusiva con el deployment gpt-5-mini en Azure OpenAI
- * - Historial tradicional y formato de conversación compatibles
- * - Guardado automático en formato OpenAI (si usas cosmosService)
- * - Estadísticas y estimación de costos para gpt-5-mini
+ * Servicio Azure OpenAI MEJORADO con soporte para formato de conversación
+ * - Integración completa con Azure OpenAI Service
+ * - Mantiene compatibilidad con historial tradicional
+ * - Aprovecha formato de conversación cuando está disponible
+ * - Guardado automático en formato OpenAI
+ * - Consulta de saldos Nova
  */
 class AzureOpenAIService {
-  constructor() {
-    this.initialized = false;
-    this.initializationError = null;
-
-    // Tracking de tokens
-    this.tokenUsage = {
-      total: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      byUser: new Map(),
-      byModel: new Map(),
-      byTool: new Map(),
-      sessions: [],
-      startTime: new Date()
-    };
-
-    console.log('🚀 Inicializando Azure OpenAI Service (exclusivo gpt-5-mini) con tracking de tokens...');
-    this.diagnoseConfiguration();
-    this.initializeAzureOpenAI();
-    this.tools = this.defineTools?.() || [];
-
-    console.log(`✅ Azure OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
-    console.log(`🔗 Formato de conversación: ${cosmosService?.isAvailable?.() ? 'Disponible' : 'No disponible'}`);
-    console.log(`📊 Tracking de tokens: Habilitado`);
-  }
-
-  /**
-   * Metadatos del modelo gpt-5-mini centralizados
-   */
-  getModelInfo() {
-    return {
-      modelId: 'gpt-5-mini',
-      description: 'Reasoning + Chat Completions + Responses + Herramientas + Texto/Imagen (entrada) → Texto/Imagen',
-      // Context Window total y límites típicos (según especificación del usuario)
-      contextWindow: 400_000,
-      inputLimit: 272_000,
-      maxOutputTokens: 128_000,
-      trainingDataUpTo: 'October 24, 2024'
-    };
-  }
-
-  /**
-   * Diagnóstico y configuración (exclusivo gpt-5-mini)
-   */
-  diagnoseConfiguration() {
-    console.log('🔍 Diagnosticando configuración Azure OpenAI (solo gpt-5-mini)...');
-
-    const config = {
-      apiKey: process.env.OPENAI_API_KEY,
-      endpoint: process.env.OPENAI_ENDPOINT,
-      // Deployment: puedes sobreescribir con AZURE_OPENAI_DEPLOYMENT; por defecto usamos el nombre del modelo
-      deploymentName: 'gpt-5-mini',
-      apiVersion: '2024-12-01-preview'
-    };
-
-    // Validación dura: sólo permitimos gpt-5-mini
-    if (config.deploymentName !== 'gpt-5-mini') {
-      console.warn(`⚠️ Se forzará el deployment a 'gpt-5-mini' (valor actual: "${config.deploymentName}").`);
-      config.deploymentName = 'gpt-5-mini';
+    constructor() {
+        this.initialized = false;
+        this.initializationError = null;
+        
+        console.log('🚀 Inicializando Azure OpenAI Service con soporte para formato de conversación...');
+        this.diagnoseConfiguration();
+        this.initializeAzureOpenAI();
+        this.tools = this.defineTools();
+        
+        console.log(`✅ Azure OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
+        console.log(`🔗 Formato de conversación: ${cosmosService.isAvailable() ? 'Disponible' : 'No disponible'}`);
     }
 
-    console.log('📊 Estado de configuración Azure:');
-    console.log(`   API Key: ${config.apiKey ? '✅ Configurada' : '❌ Faltante'}`);
-    console.log(`   Endpoint: ${config.endpoint ? '✅ Configurado' : '❌ Faltante'}`);
-    console.log(`   API Version: ${config.apiVersion}`);
-    console.log(`   Deployment: ${config.deploymentName}`);
+    /**
+     * ✅ Diagnóstico de configuración Azure OpenAI
+     */
+    diagnoseConfiguration() {
+        console.log('🔍 Diagnosticando configuración Azure OpenAI...');
+        
+        const config = {
+            apiKey: process.env.OPENAI_API_KEY,
+            endpoint: process.env.OPENAI_ENDPOINT,
+            region: 'eastus2', 
+            deploymentName: 'gpt-5-mini',
+            apiVersion: '2024-12-01-preview'
+        };
 
-    if (config.apiKey) {
-      console.log(`   Key Preview: ${config.apiKey.substring(0, 10)}...${config.apiKey.slice(-4)}`);
-    }
-    if (config.endpoint) {
-      console.log(`   Endpoint: ${config.endpoint}`);
-    }
-
-    this.config = config;
-  }
-
-  /**
-   * Inicialización del cliente Azure OpenAI (solo gpt-5-mini)
-   */
-  initializeAzureOpenAI() {
-    try {
-      const { apiKey, endpoint, apiVersion, deploymentName } = this.config;
-
-      if (!apiKey) {
-        this.initializationError = 'OPENAI_API_KEY/AZURE_OPENAI_API_KEY no está configurada';
-        console.error('❌ Azure OpenAI Error:', this.initializationError);
-        this.openaiAvailable = false;
-        return;
-      }
-
-      if (!endpoint) {
-        this.initializationError = 'OPENAI_ENDPOINT/AZURE_OPENAI_ENDPOINT no está configurado';
-        console.error('❌ Azure OpenAI Error:', this.initializationError);
-        this.openaiAvailable = false;
-        return;
-      }
-
-      if (!endpoint.includes('openai.azure.com')) {
-        console.warn('⚠️ El endpoint no parece ser de Azure OpenAI');
-      }
-
-      console.log('🔑 Configurando cliente Azure OpenAI (gpt-5-mini)...');
-
-      // Config de cliente OpenAI para Azure (ruta de deployments)
-      this.openai = new OpenAI({
-        apiKey,
-        baseURL: `${endpoint}/openai/deployments/${deploymentName}`,
-        defaultQuery: { 'api-version': apiVersion },
-        defaultHeaders: {
-          'Content-Type': 'application/json',
-          'api-key': apiKey
-        },
-        timeout: 45_000,
-        maxRetries: 3
-      });
-
-      // Guardar datos del deployment/modelo
-      const { modelId, maxOutputTokens } = this.getModelInfo();
-      this.deploymentName = deploymentName; // nombre del deployment en Azure (igual al modelo)
-      this.modelId = modelId;               // id lógico de modelo
-      this.apiVersion = apiVersion;
-      this.maxOutputTokens = maxOutputTokens;
-
-      this.openaiAvailable = true;
-      this.initialized = true;
-
-      console.log('✅ Cliente Azure OpenAI configurado exitosamente');
-      console.log(`🎯 Deployment/Model: ${deploymentName}`);
-      console.log(`📅 API Version: ${apiVersion}`);
-
-      if (process.env.NODE_ENV !== 'production') {
-        this.testConnection();
-      }
-    } catch (error) {
-      this.initializationError = `Error inicializando Azure OpenAI: ${error.message}`;
-      console.error('❌ Error inicializando Azure OpenAI:', error);
-      this.openaiAvailable = false;
-    }
-  }
-
-  /**
-   * Test básico de conectividad (gpt-5-mini)
-   */
-  async testConnection() {
-    try {
-      console.log('🧪 Probando conectividad con Azure OpenAI (gpt-5-mini)...');
-
-      const testResponse = await this.openai.chat.completions.create({
-        model: this.deploymentName, // deploymentName en Azure
-        messages: [{ role: 'user', content: 'Test' }],
-        max_completion_tokens: 5,
-        temperature: 0
-      });
-
-      if (testResponse?.choices?.length > 0) {
-        if (testResponse.usage) {
-          this.trackTokenUsage(testResponse.usage, 'test', 'system', this.modelId);
-          console.log(`📊 Test tokens: ${testResponse.usage.total_tokens}`);
+        console.log('📊 Estado de configuración Azure:');
+        console.log(`   API Key: ${config.apiKey ? '✅ Configurada' : '❌ Faltante'}`);
+        console.log(`   Endpoint: ${config.endpoint ? '✅ Configurado' : '❌ Faltante'}`);
+        console.log(`   Region: ${config.region ? '✅ Configurada' : '⚠️ Opcional'}`);
+        console.log(`   API Version: ${config.apiVersion}`);
+        console.log(`   Deployment: ${config.deploymentName}`);
+        
+        if (config.apiKey) {
+            console.log(`   Key Preview: ${config.apiKey.substring(0, 10)}...${config.apiKey.slice(-4)}`);
         }
-        console.log('✅ Test de conectividad Azure OpenAI exitoso');
-        return { success: true, model: this.deploymentName, usage: testResponse.usage };
-      } else {
-        console.warn('⚠️ Respuesta de test inválida');
-        return { success: false, error: 'Respuesta inválida' };
-      }
-    } catch (error) {
-      console.warn('⚠️ Test de conectividad falló:', error.message);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Tracking de uso de tokens
-   */
-  trackTokenUsage(usage, operationType, userId = 'unknown', model = null) {
-    try {
-      if (!usage || typeof usage !== 'object') {
-        console.warn('⚠️ Datos de usage inválidos:', usage);
-        return;
-      }
-
-      const tokenData = {
-        prompt_tokens: usage.prompt_tokens || 0,
-        completion_tokens: usage.completion_tokens || 0,
-        total_tokens: usage.total_tokens || 0,
-        timestamp: new Date(),
-        operationType,
-        userId,
-        model: model || this.modelId
-      };
-
-      // Totales generales
-      this.tokenUsage.total.prompt_tokens += tokenData.prompt_tokens;
-      this.tokenUsage.total.completion_tokens += tokenData.completion_tokens;
-      this.tokenUsage.total.total_tokens += tokenData.total_tokens;
-
-      // Por usuario
-      if (!this.tokenUsage.byUser.has(userId)) {
-        this.tokenUsage.byUser.set(userId, {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-          requests: 0,
-          firstRequest: new Date(),
-          lastRequest: new Date()
-        });
-      }
-      const userData = this.tokenUsage.byUser.get(userId);
-      userData.prompt_tokens += tokenData.prompt_tokens;
-      userData.completion_tokens += tokenData.completion_tokens;
-      userData.total_tokens += tokenData.total_tokens;
-      userData.requests++;
-      userData.lastRequest = new Date();
-
-      // Por modelo (solo gpt-5-mini, pero mantenemos estructura)
-      const modelKey = tokenData.model;
-      if (!this.tokenUsage.byModel.has(modelKey)) {
-        this.tokenUsage.byModel.set(modelKey, {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-          requests: 0
-        });
-      }
-      const modelData = this.tokenUsage.byModel.get(modelKey);
-      modelData.prompt_tokens += tokenData.prompt_tokens;
-      modelData.completion_tokens += tokenData.completion_tokens;
-      modelData.total_tokens += tokenData.total_tokens;
-      modelData.requests++;
-
-      // Por operación/herramienta
-      if (!this.tokenUsage.byTool.has(operationType)) {
-        this.tokenUsage.byTool.set(operationType, {
-          prompt_tokens: 0,
-          completion_tokens: 0,
-          total_tokens: 0,
-          requests: 0
-        });
-      }
-      const toolData = this.tokenUsage.byTool.get(operationType);
-      toolData.prompt_tokens += tokenData.prompt_tokens;
-      toolData.completion_tokens += tokenData.completion_tokens;
-      toolData.total_tokens += tokenData.total_tokens;
-      toolData.requests++;
-
-      // Sesión individual
-      this.tokenUsage.sessions.push(tokenData);
-      if (this.tokenUsage.sessions.length > 1000) {
-        this.tokenUsage.sessions = this.tokenUsage.sessions.slice(-1000);
-      }
-
-      console.log(`📊 [${userId}] Tokens registrados: ${tokenData.total_tokens} (${operationType})`);
-      console.log(`📈 [${userId}] Total acumulado: ${userData.total_tokens} tokens en ${userData.requests} requests`);
-    } catch (error) {
-      console.error('❌ Error tracking tokens:', error);
-    }
-  }
-
-  /**
-   * Estadísticas de tokens
-   */
-  getTokenStatistics(userId = null) {
-    try {
-      const now = new Date();
-      const uptime = Math.round((now - this.tokenUsage.startTime) / 1000 / 60);
-
-      const stats = {
-        service: {
-          uptime_minutes: uptime,
-          start_time: this.tokenUsage.startTime,
-          total_requests: this.tokenUsage.sessions.length
-        },
-        total: { ...this.tokenUsage.total },
-        models: Object.fromEntries(this.tokenUsage.byModel),
-        operations: Object.fromEntries(this.tokenUsage.byTool),
-        model_info: this.getModelInfo(),
-        cost_estimate: this.calculateCostEstimate(this.tokenUsage.total)
-      };
-
-      if (userId && this.tokenUsage.byUser.has(userId)) {
-        const u = this.tokenUsage.byUser.get(userId);
-        stats.user = { ...u, cost_estimate: this.calculateCostEstimate(u) };
-      } else if (userId) {
-        stats.user = { message: `No hay estadísticas registradas para el usuario: ${userId}` };
-      }
-
-      if (!userId) {
-        const topUsers = Array.from(this.tokenUsage.byUser.entries())
-          .sort(([, a], [, b]) => b.total_tokens - a.total_tokens)
-          .slice(0, 5)
-          .map(([user, data]) => ({
-            user: user.substring(0, 3) + '***',
-            total_tokens: data.total_tokens,
-            requests: data.requests
-          }));
-        stats.top_users = topUsers;
-      }
-
-      return stats;
-    } catch (error) {
-      console.error('❌ Error obteniendo estadísticas de tokens:', error);
-      return { error: error.message };
-    }
-  }
-
-  /**
-   * Estimación de costo (SOLO gpt-5-mini)
-   * Puedes ajustar precios con:
-   *  - GPT51_MINI_PRICE_INPUT_PER_1K (USD por 1K tokens de entrada)
-   *  - GPT51_MINI_PRICE_OUTPUT_PER_1K (USD por 1K tokens de salida)
-   */
-  calculateCostEstimate(tokenData) {
-    try {
-      const inputRate =
-        parseFloat(process.env.GPT51_MINI_PRICE_INPUT_PER_1K) ||
-        0.00015; // valor por defecto (ejemplo) USD / 1K input tokens
-      const outputRate =
-        parseFloat(process.env.GPT51_MINI_PRICE_OUTPUT_PER_1K) ||
-        0.0006; // valor por defecto (ejemplo) USD / 1K output tokens
-
-      const inputCost = (tokenData.prompt_tokens / 1000) * inputRate;
-      const outputCost = (tokenData.completion_tokens / 1000) * outputRate;
-      const totalCost = inputCost + outputCost;
-
-      return {
-        model: this.modelId,
-        input_cost_usd: parseFloat(inputCost.toFixed(6)),
-        output_cost_usd: parseFloat(outputCost.toFixed(6)),
-        total_cost_usd: parseFloat(totalCost.toFixed(6)),
-        input_tokens: tokenData.prompt_tokens,
-        output_tokens: tokenData.completion_tokens,
-        total_tokens: tokenData.total_tokens,
-        pricing_applied: {
-          input_per_1k: inputRate,
-          output_per_1k: outputRate
+        if (config.endpoint) {
+            console.log(`   Endpoint: ${config.endpoint}`);
         }
-      };
-    } catch (error) {
-      console.error('❌ Error calculando costo:', error);
-      return { error: error.message };
+
+        this.config = config;
     }
-  }
+
+    /**
+     * ✅ Inicialización del cliente Azure OpenAI
+     */
+    initializeAzureOpenAI() {
+        try {
+            const { apiKey, endpoint, apiVersion, deploymentName } = this.config;
+            
+            if (!apiKey) {
+                this.initializationError = 'AZURE_OPENAI_API_KEY no está configurada en las variables de entorno';
+                console.error('❌ Azure OpenAI Error:', this.initializationError);
+                this.openaiAvailable = false;
+                return;
+            }
+
+            if (!endpoint) {
+                this.initializationError = 'AZURE_OPENAI_ENDPOINT no está configurado en las variables de entorno';
+                console.error('❌ Azure OpenAI Error:', this.initializationError);
+                this.openaiAvailable = false;
+                return;
+            }
+
+            // Validar formato del endpoint
+            if (!endpoint.includes('openai.azure.com')) {
+                console.warn('⚠️ El endpoint no parece ser de Azure OpenAI');
+            }
+            
+            console.log('🔑 Configurando cliente Azure OpenAI...');
+            
+            // Configuración específica para Azure OpenAI
+            this.openai = new OpenAI({
+                apiKey: apiKey,
+                baseURL: `${endpoint}/openai/deployments/${deploymentName}`,
+                defaultQuery: { 'api-version': apiVersion },
+                defaultHeaders: {
+                    'Content-Type': 'application/json',
+                    'api-key': apiKey
+                },
+                timeout: 45000, // 45 segundos para respuestas complejas
+                maxRetries: 3   // 3 reintentos
+            });
+
+            // Guardar información de deployment
+            this.deploymentName = deploymentName;
+            this.apiVersion = apiVersion;
+            
+            this.openaiAvailable = true;
+            this.initialized = true;
+            
+            console.log('✅ Cliente Azure OpenAI configurado exitosamente');
+            console.log(`🎯 Deployment: ${deploymentName}`);
+            console.log(`📅 API Version: ${apiVersion}`);
+            
+            // Test básico de conectividad (opcional)
+            if (process.env.NODE_ENV !== 'production') {
+                this.testConnection();
+            }
+            
+        } catch (error) {
+            this.initializationError = `Error inicializando Azure OpenAI: ${error.message}`;
+            console.error('❌ Error inicializando Azure OpenAI:', error);
+            this.openaiAvailable = false;
+        }
+    }
+
+    /**
+     * ✅ Test de conectividad básico con Azure OpenAI
+     */
+    async testConnection() {
+        try {
+            console.log('🧪 Probando conectividad con Azure OpenAI...');
+            
+            const testResponse = await this.openai.chat.completions.create({
+                model: this.deploymentName, // Usar deployment name en lugar de model
+                messages: [{ role: "user", content: "Test" }],
+                max_completion_tokens: 5,
+                temperature: 0
+            });
+            
+            if (testResponse?.choices?.length > 0) {
+                console.log('✅ Test de conectividad Azure OpenAI exitoso');
+                return { 
+                    success: true, 
+                    model: this.deploymentName,
+                    usage: testResponse.usage 
+                };
+            } else {
+                console.warn('⚠️ Respuesta de test inválida');
+                return { success: false, error: 'Respuesta inválida' };
+            }
+            
+        } catch (error) {
+            console.warn('⚠️ Test de conectividad falló:', error.message);
+            
+            // Análisis específico de errores de Azure
+            if (error.message.includes('DeploymentNotFound')) {
+                console.error(`❌ Deployment "${this.deploymentName}" no encontrado`);
+            } else if (error.message.includes('InvalidApiVersion')) {
+                console.error(`❌ API Version "${this.apiVersion}" inválida`);
+            } else if (error.message.includes('Unauthorized')) {
+                console.error('❌ API Key inválida o sin permisos');
+            }
+            
+            return { success: false, error: error.message };
+        }
+    }
 
     /**
      * ✅ Definir herramientas disponibles (sin cambios en la funcionalidad)

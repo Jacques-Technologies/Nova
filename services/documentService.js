@@ -47,8 +47,8 @@ class DocumentService {
                 // ----- MODO AZURE OPENAI (usando cliente OpenAI genérico) -----
                 console.log('🔧 Configurando Azure OpenAI...');
                 
-                const apiVersion = process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview';
-                const deploymentName = process.env.AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT;
+                const apiVersion = '2024-02-15-preview';
+                const deploymentName = 'text-embedding-3-large'; // Usar nombre de deployment fijo o de variable de entorno
 
                 if (!deploymentName) {
                     throw new Error('Falta AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT');

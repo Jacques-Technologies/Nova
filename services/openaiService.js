@@ -134,7 +134,7 @@ class AzureOpenAIService {
             const testResponse = await this.openai.chat.completions.create({
                 model: this.deploymentName, // Usar deployment name en lugar de model
                 messages: [{ role: "user", content: "Test" }],
-                max_tokens: 5,
+                max_completion_tokens: 5,
                 temperature: 0
             });
             
@@ -380,7 +380,7 @@ class AzureOpenAIService {
                 model: this.deploymentName, // Usar deployment name
                 messages: mensajesParaIA,
                 temperature: this.calculateTemperature(mensaje),
-                max_tokens: this.calculateMaxTokens(mensaje),
+                max_completion_tokens: this.calculateMaxTokens(mensaje),
                 presence_penalty: 0.1,
                 frequency_penalty: 0.1
             };
@@ -584,7 +584,7 @@ ${historial.length > 0 ?
             model: this.deploymentName, // Usar deployment name
             messages: finalMessages,
             temperature: 0.7,
-            max_tokens: 3000
+            max_completion_tokens: 3000
         });
 
         return {
@@ -864,7 +864,7 @@ ${historial.length > 0 ?
                     }
                 ],
                 temperature: 0.3,
-                max_tokens: 2000
+                max_completion_tokens: 2000
             });
 
             const analisis = analisisResponse.choices[0].message.content;

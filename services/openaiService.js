@@ -347,6 +347,60 @@ class AzureOpenAIService {
      * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con búsqueda automática de documentos
      */
 // 🔽 Dentro de class AzureOpenAIService
+// 👇 Pega esto DENTRO de class AzureOpenAIService (mismo nivel que procesarMensaje)
+async generarRespuestaConDocumentos(pregunta, resultadosRaw, userInfo) {
+    const userId = userInfo?.usuario || 'unknown';
+
+    // 1) Construir contexto: usa el helper del documentService si existe; si no, fallback local
+    let contexto = '';
+    if (documentService && typeof documentService.construirContextoRAG === 'function') {
+        contexto = documentService.construirContextoRAG(resultadosRaw);
+    } else {
+        const piezas = (resultadosRaw || []).map((r, i) => {
+            const header = `[[DOC ${i+1} — ${r.fileName}${r.folder ? ' | ' + r.folder : ''}]]`;
+            const body = (r.chunk || '').slice(0, 1600);
+            return `${header}\n${body}`;
+        });
+        contexto = piezas.join('\n\n---\n\n');
+    }
+
+    // 2) Prompts (síntesis corta y concreta)
+    const systemPrompt = `
+Eres un asistente corporativo. Responde con UNA sola respuesta breve, directa y accionable
+(5–10 líneas máximo), basada EXCLUSIVAMENTE en el contexto entre [[DOC …]].
+Si algo no aparece en los docs, dilo explícitamente: **Esta información no proviene de los documentos internos de Nova**.
+Cuando corresponda, referencia el documento así: (Ver: NombreDeArchivo.ext).
+No hagas listas interminables ni pegues texto literal, sintetiza.
+    `.trim();
+
+    const userPrompt = `
+[PREGUNTA]
+${pregunta}
+
+[CONTEXTOS]
+${contexto}
+    `.trim();
+
+    // 3) Llamada al deployment de Azure OpenAI (usa your this.deploymentName = 'gpt-5-mini')
+    const completion = await this.openai.chat.completions.create({
+        model: this.deploymentName,   // ← debe ser el deployment name real en Azure (p.ej. 'gpt-5-mini')
+        messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.2,
+        max_completion_tokens: 600
+    });
+
+    let answer = completion.choices?.[0]?.message?.content?.trim() || '';
+
+    // 4) Apéndice corto de fuentes (opcional)
+    const fuentes = [...new Set((resultadosRaw || []).map(r => r.fileName))].slice(0, 3);
+    if (fuentes.length) {
+        answer += `\n\n🔎 Fuentes: ${fuentes.join(', ')}`;
+    }
+    return answer;
+}
 
 async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
     try {

@@ -1,15 +1,15 @@
-// services/openaiService.js - MEJORADO: Con soporte para Azure OpenAI y formato de conversación
 const { OpenAI } = require('openai');
 const { DefaultAzureCredential } = require('@azure/identity');
 const { DateTime } = require('luxon');
 const axios = require('axios');
-const { CardFactory } = require('botbuilder');
 const cosmosService = require('./cosmosService');
+const documentService = require('./documentService'); // ✅ NUEVA INTEGRACIÓN
 require('dotenv').config();
 
 /**
- * Servicio Azure OpenAI MEJORADO con soporte para formato de conversación
+ * Servicio Azure OpenAI MEJORADO con búsqueda automática de documentos
  * - Integración completa con Azure OpenAI Service
+ * - Búsqueda automática de documentos para preguntas técnicas
  * - Mantiene compatibilidad con historial tradicional
  * - Aprovecha formato de conversación cuando está disponible
  * - Guardado automático en formato OpenAI
@@ -20,13 +20,14 @@ class AzureOpenAIService {
         this.initialized = false;
         this.initializationError = null;
         
-        console.log('🚀 Inicializando Azure OpenAI Service con soporte para formato de conversación...');
+        console.log('🚀 Inicializando Azure OpenAI Service con búsqueda automática de documentos...');
         this.diagnoseConfiguration();
         this.initializeAzureOpenAI();
         this.tools = this.defineTools();
         
         console.log(`✅ Azure OpenAI Service inicializado - Disponible: ${this.openaiAvailable}`);
         console.log(`🔗 Formato de conversación: ${cosmosService.isAvailable() ? 'Disponible' : 'No disponible'}`);
+        console.log(`📚 Document Search: ${documentService.isAvailable() ? 'Disponible' : 'No disponible'}`);
     }
 
     /**
@@ -167,10 +168,33 @@ class AzureOpenAIService {
     }
 
     /**
-     * ✅ Definir herramientas disponibles (sin cambios en la funcionalidad)
+     * ✅ NUEVA HERRAMIENTA: Buscar en documentos
      */
     defineTools() {
         const tools = [
+            {
+                type: "function",
+                function: {
+                    name: "buscar_documentos_nova",
+                    description: "Busca información específica en los documentos internos de Nova, incluyendo documentación de APIs, procedimientos, políticas y guías técnicas.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            consulta: {
+                                type: "string",
+                                description: "Término o frase a buscar en los documentos internos"
+                            },
+                            tipo_busqueda: {
+                                type: "string",
+                                enum: ["general", "politicas", "api", "procedimientos", "tecnica"],
+                                description: "Tipo específico de búsqueda a realizar",
+                                default: "general"
+                            }
+                        },
+                        required: ["consulta"]
+                    }
+                }
+            },
             {
                 type: "function",
                 function: {
@@ -315,12 +339,12 @@ class AzureOpenAIService {
             }
         ];
 
-        console.log(`🛠️ ${tools.length} herramientas definidas para Azure OpenAI (incluyendo consulta de saldos)`);
+        console.log(`🛠️ ${tools.length} herramientas definidas para Azure OpenAI (incluyendo búsqueda de documentos)`);
         return tools;
     }
 
     /**
-     * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con Azure OpenAI
+     * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con búsqueda automática de documentos
      */
     async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
         try {
@@ -339,6 +363,13 @@ class AzureOpenAIService {
 
             console.log(`📝 [${userInfo?.usuario || 'unknown'}] Procesando: "${mensaje.substring(0, 50)}..."`);
             console.log(`📚 [${userInfo?.usuario || 'unknown'}] Historial recibido: ${historial.length} mensajes`);
+
+            // ✅ NUEVA FUNCIONALIDAD: Búsqueda automática de documentos para preguntas técnicas
+            let documentContext = '';
+            if (this.needsDocumentSearch(mensaje)) {
+                console.log(`🔍 [${userInfo?.usuario || 'unknown'}] Pregunta técnica detectada, buscando en documentos...`);
+                documentContext = await this.buscarDocumentosAutomaticamente(mensaje, userInfo?.usuario || 'unknown');
+            }
 
             // ✅ DECISIÓN INTELIGENTE: Usar formato de conversación OpenAI si está disponible
             let mensajesParaIA = [];
@@ -369,7 +400,14 @@ class AzureOpenAIService {
             // ✅ FALLBACK: Usar historial tradicional si formato OpenAI no está disponible
             if (!usingOpenAIFormat) {
                 console.log(`📋 [${userInfo?.usuario || 'unknown'}] Usando historial tradicional formateado`);
-                mensajesParaIA = this.formatearHistorialTradicional(historial, userInfo);
+                mensajesParaIA = this.formatearHistorialTradicional(historial, userInfo, documentContext);
+            } else if (documentContext) {
+                // ✅ Agregar contexto de documentos al sistema si se usa formato OpenAI
+                const systemMessageIndex = mensajesParaIA.findIndex(msg => msg.role === 'system');
+                if (systemMessageIndex !== -1) {
+                    mensajesParaIA[systemMessageIndex].content += `\n\n🔍 **INFORMACIÓN DE DOCUMENTOS ENCONTRADA:**\n${documentContext}`;
+                    console.log(`📚 [${userInfo?.usuario || 'unknown'}] Contexto de documentos agregado al sistema OpenAI`);
+                }
             }
 
             // ✅ AGREGAR: Mensaje actual del usuario
@@ -424,6 +462,7 @@ class AzureOpenAIService {
                 messagesProcessed: mensajesParaIA.length,
                 modelUsed: requestConfig.model,
                 toolsUsed: !!messageResponse.tool_calls,
+                documentSearchUsed: !!documentContext,
                 azureDeployment: this.deploymentName,
                 apiVersion: this.apiVersion,
                 usage: response.usage // Información de uso de tokens
@@ -438,18 +477,130 @@ class AzureOpenAIService {
     }
 
     /**
-     * ✅ NUEVO: Formatear historial tradicional cuando no hay formato OpenAI
+     * ✅ NUEVA FUNCIÓN: Detectar si se necesita búsqueda de documentos
      */
-    formatearHistorialTradicional(historial, userInfo) {
+    needsDocumentSearch(mensaje) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        // Palabras clave que indican necesidad de buscar en documentos
+        const documentKeywords = [
+            // APIs y endpoints
+            'endpoint', 'api', 'rest', 'validasocio', 'valida socio', 'validar socio',
+            'autenticacion', 'autenticación', 'login', 'inicio sesion', 'inicio de sesión',
+            
+            // Versiones y documentación técnica
+            'version', 'versión', 'v1.1', 'v1.0', 'documentacion', 'documentación',
+            'especificacion', 'especificación',
+            
+            // Procedimientos y políticas
+            'procedimiento', 'proceso', 'política', 'politica', 'lineamiento',
+            'norma', 'regla', 'protocolo', 'guía', 'guia', 'manual',
+            
+            // Validaciones y controles
+            'validacion', 'validación', 'control', 'verificacion', 'verificación',
+            'requisito', 'campo', 'parametro', 'parámetro',
+            
+            // Preguntas sobre propósito/funcionamiento
+            'proposito', 'propósito', 'para que sirve', 'para qué sirve',
+            'como funciona', 'cómo funciona', 'que hace', 'qué hace',
+            
+            // Referencias específicas a documentación
+            'documento', 'archivo', 'referencia', 'información técnica',
+            'especificaciones técnicas'
+        ];
+        
+        const needsSearch = documentKeywords.some(keyword => mensajeLower.includes(keyword));
+        
+        if (needsSearch) {
+            console.log(`📚 Búsqueda de documentos requerida para: "${mensaje.substring(0, 50)}..."`);
+            console.log(`   Palabras clave detectadas: ${documentKeywords.filter(k => mensajeLower.includes(k)).join(', ')}`);
+        }
+        
+        return needsSearch;
+    }
+
+    /**
+     * ✅ NUEVA FUNCIÓN: Buscar documentos automáticamente
+     */
+    async buscarDocumentosAutomaticamente(mensaje, userId) {
+        try {
+            if (!documentService.isAvailable()) {
+                console.log(`⚠️ [${userId}] Document Service no disponible para búsqueda automática`);
+                return '';
+            }
+
+            console.log(`🔍 [${userId}] Ejecutando búsqueda automática de documentos...`);
+            
+            // Extraer términos de búsqueda más específicos del mensaje
+            const terminosBusqueda = this.extraerTerminosBusqueda(mensaje);
+            console.log(`🎯 [${userId}] Términos de búsqueda extraídos: "${terminosBusqueda}"`);
+            
+            const resultado = await documentService.buscarDocumentos(terminosBusqueda, userId);
+            
+            if (resultado && !resultado.includes('No se encontraron documentos')) {
+                console.log(`✅ [${userId}] Documentos encontrados automáticamente`);
+                return resultado;
+            } else {
+                console.log(`⚠️ [${userId}] No se encontraron documentos relevantes en búsqueda automática`);
+                return '';
+            }
+            
+        } catch (error) {
+            console.error(`❌ [${userId}] Error en búsqueda automática de documentos:`, error);
+            return '';
+        }
+    }
+
+    /**
+     * ✅ NUEVA FUNCIÓN: Extraer términos de búsqueda optimizados
+     */
+    extraerTerminosBusqueda(mensaje) {
+        const mensajeLower = mensaje.toLowerCase();
+        
+        // Mapeo de términos para mejorar la búsqueda
+        const terminosMap = {
+            'validasocio': 'validaSocio Auth validar socio autenticación',
+            'valida socio': 'validaSocio Auth validar socio autenticación',
+            'validar socio': 'validaSocio Auth validar socio autenticación',
+            'endpoint': 'endpoint API REST servicio',
+            'autenticacion': 'autenticación Auth login validación',
+            'autenticación': 'autenticación Auth login validación',
+            'inicio sesion': 'inicio sesión login Auth validación',
+            'inicio de sesión': 'inicio sesión login Auth validación',
+            'v1.1': 'versión 1.1 API REST',
+            'version 1.1': 'versión 1.1 API REST',
+            'versión 1.1': 'versión 1.1 API REST'
+        };
+        
+        // Buscar términos específicos y expandirlos
+        for (const [termino, expansion] of Object.entries(terminosMap)) {
+            if (mensajeLower.includes(termino)) {
+                console.log(`🎯 Término específico detectado: "${termino}" → "${expansion}"`);
+                return expansion;
+            }
+        }
+        
+        // Si no hay términos específicos, extraer palabras clave importantes
+        const palabrasImportantes = mensaje.match(/\b\w{4,}\b/g) || [];
+        const terminosRelevantes = palabrasImportantes
+            .filter(palabra => !['cuál', 'cual', 'propósito', 'proposito', 'para', 'antes', 'permite', 'permite'].includes(palabra.toLowerCase()))
+            .slice(0, 3) // Máximo 3 términos
+            .join(' ');
+            
+        return terminosRelevantes || mensaje;
+    }
+
+    /**
+     * ✅ NUEVO: Formatear historial tradicional con contexto de documentos
+     */
+    formatearHistorialTradicional(historial, userInfo, documentContext = '') {
         const fechaActual = DateTime.now().setZone('America/Mexico_City');
         
         const userContext = userInfo ? 
             `Usuario autenticado: ${userInfo.nombre} (${userInfo.usuario})` : 
             'Usuario no autenticado';
 
-        const mensajes = [{
-            role: "system",
-            content: `
+        let systemContent = `
         // ✅ AQUÍ VAN LAS INSTRUCCIONES DEL PROMPT ✅
         
         Tu nombre es Nova-AI, y eres un Asistente virtual inteligente para la institución financiera Nova.
@@ -470,7 +621,7 @@ class AzureOpenAIService {
         ALCANCE DE CONOCIMIENTOS:
         Si te preguntan acerca de tu alcance, información que conoces, qué sabes hacer o tu base de conocimientos, responde que conoces los servicios financieros de Nova así como los procedimientos principales.
 
-        Algunos ejemplos de la información que conoces son: consultas de saldos, procedimientos de retiro de ahorros, transferencias entre tipos de ahorro, tasas de interés para ahorros y préstamos, gestión de cuotas de ahorro, tipos de ahorro disponibles, horarios de operaciones, tipos de préstamos disponibles, lineamientos para préstamos, procedimientos para solicitar préstamos, préstamos hipotecarios, pagos de préstamos, guías de uso de APP y portal web, recuperación de facturas en garantía, liberación de hipotecas, préstamos con garantía de inversión, entre muchos otros servicios financieros.
+        Algunos ejemplos de la información que conoces son: consultas de saldos, procedimientos de retiro de ahorros, transferencias entre tipos de ahorro, tasas de interés para ahorros y préstamos, gestión de cuotas de ahorro, tipos de ahorro disponibles, horarios de operaciones, tipos de préstamos disponibles, lineamientos para préstamos, procedimientos para solicitar préstamos, préstamos hipotecarios, pagos de préstamos, guías de uso de APP y portal web, recuperación de facturas en garantía, liberación de hipotecas, préstamos con garantía de inversión, documentación de APIs y endpoints, entre muchos otros servicios financieros.
 
 🔷 **Contexto del Usuario:**
 ${userContext}
@@ -484,14 +635,16 @@ ${historial.length > 0 ?
   'Esta es una conversación nueva.'
 }
 
-🔷 **Tus Capacidades (Azure OpenAI):**
+🔷 **Tus Capacidades (Azure OpenAI + Document Search):**
 • Conversación natural e inteligente con memoria contextual
+• Búsqueda automática en documentos internos de Nova
 • Consulta de saldos del usuario autenticado
 • Consulta de tasas de interés de Nova (herramienta especializada)
 • Información del usuario autenticado
 • Consultas a APIs internas de Nova
 • Análisis y explicaciones detalladas
 • Generación de resúmenes de conversación
+• Documentación técnica de APIs y procedimientos
 
 🔷 **Personalidad:**
 • Profesional pero amigable
@@ -499,15 +652,18 @@ ${historial.length > 0 ?
 • Claro y conciso en respuestas
 • Usa la memoria de conversación para dar respuestas más contextuales
 • Enfocado en productividad corporativa y servicios financieros
+• Experto en documentación técnica de Nova
 
 🔷 **Importante:**
 • Siempre mantén la información del usuario segura
 • Para consultas de saldos, usa la herramienta especializada
 • Para consultas de tasas, usa la herramienta especializada
+• Para preguntas sobre documentación técnica, usa la información de documentos encontrada
 • Usa el historial de conversación para dar respuestas más personalizadas
 • Si el usuario se refiere a algo anterior, busca en el historial proporcionado`
-        }];
-        
+        const mensajes = [
+            { role: 'system', content: systemContent }
+        ];
         // ✅ Procesar historial tradicional
         if (historial && historial.length > 0) {
             console.log(`📚 Formateando ${historial.length} mensajes del historial tradicional...`);

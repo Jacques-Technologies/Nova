@@ -415,75 +415,413 @@ async buscarDocumentos(consulta, userId = 'unknown') {
  * ✅ NUEVO: Buscar documentos y devolver resultados RAW (para RAG)
  * Retorna un arreglo [{ fileName, folder, chunk, score }]
  */
+// ✅ CORRECCIONES PARA MEJORAR RAG VECTOR SEARCH
+
+/**
+ * 🔧 PROBLEMA IDENTIFICADO:
+ * - La búsqueda vectorial puede no estar funcionando correctamente
+ * - Los embeddings pueden no estar alineados
+ * - La configuración híbrida puede tener conflictos
+ * - Los filtros pueden ser muy restrictivos
+ */
+
+// 1️⃣ CORREGIR EL MÉTODO buscarDocumentosRaw
 async buscarDocumentosRaw(consulta, userId = 'unknown', options = {}) {
-    console.log(`🚀 [${userId}] === BÚSQUEDA RAW PARA RAG ===`);
+    console.log(`🚀 [${userId}] === BÚSQUEDA RAW PARA RAG (CORREGIDA) ===`);
+    console.log(`🔍 [${userId}] Consulta original: "${consulta}"`);
+    
     if (!this.searchAvailable) {
         throw new Error(this.initializationError || 'Azure Search no configurado');
     }
 
     const {
-        k = 6,                 // top resultados finales
-        kNeighbors = 15,       // vecinos para vector
+        k = 6,
+        kNeighbors = 20,  // ✅ AUMENTAR vecinos para mejor recall
         select = ['Chunk', 'FileName', 'Folder'],
-        maxPerFile = 2         // evita demasiados chunks por archivo
+        maxPerFile = 3    // ✅ AUMENTAR chunks por archivo
     } = options;
 
-    // 1) Sanitizar
-    const consultaSanitizada = this.sanitizeQuery(consulta);
+    // 1) Sanitizar consulta (más permisivo)
+    const consultaSanitizada = this.sanitizeQueryForRAG(consulta);
+    console.log(`🧹 [${userId}] Consulta sanitizada: "${consultaSanitizada}"`);
 
-    // 2) Intentar vector
-    let vectorQuery = null;
+    // 2) ESTRATEGIA DUAL: Probar vectorial primero, luego texto
+    let resultados = [];
+    
+    // ✅ FASE 1: Búsqueda SOLO VECTORIAL (sin texto híbrido)
     if (this.openaiAvailable) {
         try {
+            console.log(`🧠 [${userId}] === FASE 1: BÚSQUEDA SOLO VECTORIAL ===`);
             const vector = await this.createEmbedding(consulta);
-            vectorQuery = {
-                kNearestNeighborsCount: kNeighbors,
-                fields: this.vectorField,
-                vector
+            
+            const vectorOnlyOptions = {
+                vectorQueries: [{
+                    kNearestNeighborsCount: kNeighbors,
+                    fields: this.vectorField,
+                    vector
+                }],
+                select,
+                top: k * 3,  // Más resultados para filtrar después
+                includeTotalCount: true
             };
-        } catch (e) {
-            console.warn('⚠️ Vector query no disponible, se usa solo texto:', e.message);
+            
+            console.log(`🎯 [${userId}] Ejecutando búsqueda SOLO vectorial...`);
+            const vectorResults = await this.searchClient.search("*", vectorOnlyOptions);
+            
+            const vectorDocs = await this.procesarResultadosRAG(vectorResults, k, maxPerFile, userId, "VECTOR");
+            
+            if (vectorDocs.length > 0) {
+                console.log(`✅ [${userId}] Búsqueda vectorial exitosa: ${vectorDocs.length} docs`);
+                resultados = vectorDocs;
+            } else {
+                console.log(`⚠️ [${userId}] Búsqueda vectorial sin resultados, intentando híbrida...`);
+            }
+            
+        } catch (vectorError) {
+            console.error(`❌ [${userId}] Error en búsqueda vectorial:`, vectorError.message);
         }
     }
-
-    // 3) Opciones de búsqueda (híbrida si hay vector)
-    const searchOptions = {
-        select,
-        top: Math.max(k * 4, 20),
-        searchMode: 'any',
-        queryType: 'simple',
-        includeTotalCount: true
-    };
-    if (vectorQuery) searchOptions.vectorQueries = [vectorQuery];
-
-    // 4) Ejecutar
-    const it = await this.searchClient.search(consultaSanitizada, searchOptions);
-
-    // 5) Post-proceso: dedupe + limitar por archivo
-    const porArchivo = new Map();
-    const out = [];
-    for await (const r of it.results) {
-        const d = r.document || {};
-        const file = d.FileName || '(sin nombre)';
-        const chunk = (d.Chunk || '').trim();
-        if (!chunk) continue;
-
-        if (!porArchivo.has(file)) porArchivo.set(file, 0);
-        if (porArchivo.get(file) >= maxPerFile) continue;
-
-        porArchivo.set(file, porArchivo.get(file) + 1);
-        out.push({
-            fileName: file,
-            folder: d.Folder || '',
-            chunk,
-            score: r.score || 0
-        });
-
-        if (out.length >= k) break;
+    
+    // ✅ FASE 2: Si vectorial falló, probar HÍBRIDA con query más flexible
+    if (resultados.length === 0) {
+        try {
+            console.log(`🔄 [${userId}] === FASE 2: BÚSQUEDA HÍBRIDA ===`);
+            
+            let vectorQuery = null;
+            if (this.openaiAvailable) {
+                try {
+                    const vector = await this.createEmbedding(consulta);
+                    vectorQuery = {
+                        kNearestNeighborsCount: kNeighbors,
+                        fields: this.vectorField,
+                        vector
+                    };
+                } catch (e) {
+                    console.warn(`⚠️ [${userId}] Vector no disponible para híbrida`);
+                }
+            }
+            
+            const searchOptions = {
+                select,
+                top: k * 4,
+                searchMode: 'any',      // ✅ Modo más permisivo
+                queryType: 'simple',
+                includeTotalCount: true,
+                searchFields: ['Chunk', 'FileName'], // ✅ Campos específicos
+                scoringProfile: null    // ✅ Sin perfil de scoring personalizado
+            };
+            
+            if (vectorQuery) {
+                searchOptions.vectorQueries = [vectorQuery];
+            }
+            
+            console.log(`🎯 [${userId}] Ejecutando búsqueda híbrida...`);
+            const hybridResults = await this.searchClient.search(consultaSanitizada, searchOptions);
+            
+            resultados = await this.procesarResultadosRAG(hybridResults, k, maxPerFile, userId, "HÍBRIDA");
+            
+        } catch (hybridError) {
+            console.error(`❌ [${userId}] Error en búsqueda híbrida:`, hybridError.message);
+        }
     }
+    
+    // ✅ FASE 3: Si todo falló, búsqueda de emergencia SOLO TEXTO
+    if (resultados.length === 0) {
+        console.log(`🆘 [${userId}] === FASE 3: BÚSQUEDA DE EMERGENCIA ===`);
+        try {
+            // Usar términos más amplios
+            const terminos = consulta.split(' ').filter(t => t.length > 3).slice(0, 3).join(' ');
+            const queryEmergencia = terminos || '*';
+            
+            const emergencyResults = await this.searchClient.search(queryEmergencia, {
+                select,
+                top: k * 2,
+                searchMode: 'any',
+                queryType: 'simple',
+                includeTotalCount: true
+            });
+            
+            resultados = await this.procesarResultadosRAG(emergencyResults, Math.max(k, 3), maxPerFile, userId, "EMERGENCIA");
+            
+        } catch (emergencyError) {
+            console.error(`❌ [${userId}] Error en búsqueda de emergencia:`, emergencyError.message);
+        }
+    }
+    
+    console.log(`📊 [${userId}] === RESULTADO FINAL RAG ===`);
+    console.log(`📄 [${userId}] Documentos encontrados: ${resultados.length}`);
+    
+    if (resultados.length === 0) {
+        console.warn(`⚠️ [${userId}] NINGUNA estrategia encontró resultados para: "${consulta}"`);
+        
+        // ✅ DIAGNÓSTICO: Verificar conectividad e índice
+        await this.diagnosticarIndiceRAG(userId);
+    } else {
+        console.log(`✅ [${userId}] RAG exitoso con ${resultados.length} documentos relevantes`);
+        resultados.forEach((r, i) => {
+            console.log(`   ${i+1}. ${r.fileName} (score: ${r.score.toFixed(3)}) - ${r.chunk.substring(0, 50)}...`);
+        });
+    }
+    
+    return resultados;
+}
 
-    console.log(`✅ RAW listo (${out.length} chunks)`);
-    return out;
+// 2️⃣ NUEVO: Sanitización específica para RAG (más permisiva)
+sanitizeQueryForRAG(query) {
+    if (!query || typeof query !== 'string') return '*';
+    
+    // Para RAG, ser más permisivo con caracteres especiales
+    let sanitized = query
+        .replace(/[+\-&|!(){}[\]^"~\\]/g, ' ')  // ✅ Mantener * y ? para wildcards
+        .replace(/\s+/g, ' ')
+        .trim();
+    
+    if (!sanitized || sanitized.length < 2) return '*';
+    
+    // Para consultas muy cortas, agregar wildcard
+    if (sanitized.length <= 4 && !sanitized.includes('*')) {
+        sanitized = `${sanitized}*`;
+    }
+    
+    return sanitized;
+}
+
+// 3️⃣ NUEVO: Procesador de resultados específico para RAG
+async procesarResultadosRAG(searchResults, k, maxPerFile, userId, estrategia) {
+    console.log(`🔄 [${userId}] Procesando resultados ${estrategia}...`);
+    
+    const resultados = [];
+    const porArchivo = new Map();
+    let procesados = 0;
+    
+    try {
+        for await (const result of searchResults.results) {
+            procesados++;
+            
+            const doc = result.document || {};
+            const score = result.score || 0;
+            const fileName = doc.FileName || '(sin nombre)';
+            const chunk = (doc.Chunk || '').trim();
+            
+            // ✅ Filtros mejorados
+            if (!chunk || chunk.length < 10) {
+                console.log(`   ⏭️ [${userId}] Skip: chunk muy corto`);
+                continue;
+            }
+            
+            // ✅ Control por archivo más flexible
+            if (!porArchivo.has(fileName)) porArchivo.set(fileName, 0);
+            if (porArchivo.get(fileName) >= maxPerFile) {
+                console.log(`   ⏭️ [${userId}] Skip: límite por archivo (${fileName})`);
+                continue;
+            }
+            
+            porArchivo.set(fileName, porArchivo.get(fileName) + 1);
+            
+            resultados.push({
+                fileName,
+                folder: doc.Folder || '',
+                chunk,
+                score,
+                estrategia  // ✅ Marcar la estrategia usada
+            });
+            
+            console.log(`   ✅ [${userId}] Agregado: ${fileName} (score: ${score.toFixed(3)}, estrategia: ${estrategia})`);
+            
+            if (resultados.length >= k) {
+                console.log(`   🛑 [${userId}] Límite alcanzado (${k})`);
+                break;
+            }
+        }
+        
+        console.log(`📊 [${userId}] ${estrategia}: procesados ${procesados}, seleccionados ${resultados.length}`);
+        return resultados;
+        
+    } catch (error) {
+        console.error(`❌ [${userId}] Error procesando ${estrategia}:`, error.message);
+        return [];
+    }
+}
+
+// 4️⃣ NUEVO: Diagnóstico del índice para RAG
+async diagnosticarIndiceRAG(userId) {
+    console.log(`🔍 [${userId}] === DIAGNÓSTICO RAG ===`);
+    
+    try {
+        // Verificar estadísticas del índice
+        if (this.indexClient && this.indexName) {
+            const stats = await this.indexClient.getIndexStatistics(this.indexName);
+            console.log(`📊 [${userId}] Estadísticas del índice:`, {
+                documentCount: stats.documentCount,
+                storageSize: stats.storageSize
+            });
+            
+            if (stats.documentCount === 0) {
+                console.error(`❌ [${userId}] PROBLEMA: Índice vacío (0 documentos)`);
+                return;
+            }
+        }
+        
+        // Test de búsqueda básica
+        console.log(`🧪 [${userId}] Test de búsqueda básica...`);
+        const testBasic = await this.searchClient.search("*", {
+            top: 5,
+            select: ['FileName', 'Chunk'],
+            includeTotalCount: true
+        });
+        
+        let count = 0;
+        const samples = [];
+        for await (const result of testBasic.results) {
+            count++;
+            samples.push({
+                file: result.document?.FileName,
+                hasChunk: !!(result.document?.Chunk),
+                chunkLength: (result.document?.Chunk || '').length
+            });
+            if (count >= 3) break;
+        }
+        
+        console.log(`📄 [${userId}] Muestra de documentos:`, samples);
+        console.log(`📊 [${userId}] Total en índice: ${testBasic.count || 'desconocido'}`);
+        
+        // Test de embedding si está disponible
+        if (this.openaiAvailable) {
+            console.log(`🧠 [${userId}] Test de embedding...`);
+            try {
+                const testVector = await this.createEmbedding("test documento nova");
+                console.log(`✅ [${userId}] Embedding OK (${testVector.length}D)`);
+                
+                // Test de búsqueda vectorial simple
+                const vectorTest = await this.searchClient.search("*", {
+                    vectorQueries: [{
+                        kNearestNeighborsCount: 3,
+                        fields: this.vectorField,
+                        vector: testVector
+                    }],
+                    select: ['FileName'],
+                    top: 3
+                });
+                
+                let vectorCount = 0;
+                for await (const result of vectorTest.results) {
+                    vectorCount++;
+                }
+                
+                console.log(`🎯 [${userId}] Búsqueda vectorial test: ${vectorCount} resultados`);
+                
+            } catch (embError) {
+                console.error(`❌ [${userId}] Error en test de embedding:`, embError.message);
+            }
+        }
+        
+    } catch (diagError) {
+        console.error(`❌ [${userId}] Error en diagnóstico:`, diagError.message);
+    }
+}
+
+// 5️⃣ MEJORAR needsDocumentSearch en OpenAIService
+needsDocumentSearchMejorado(mensaje) {
+    const mensajeLower = mensaje.toLowerCase();
+    
+    // ✅ EXPANDIR palabras clave para mayor cobertura
+    const documentKeywords = [
+        // APIs y endpoints (más específico)
+        'endpoint', 'api', 'rest', 'validasocio', 'valida socio', 'validar socio',
+        'autenticacion', 'autenticación', 'login', 'token', 'bearer',
+        'get', 'post', 'put', 'delete', 'request', 'response',
+        
+        // Versiones y documentación
+        'version', 'versión', 'v1', 'v2', 'documentacion', 'documentación',
+        'especificacion', 'especificación', 'manual', 'guía', 'guia',
+        
+        // Procedimientos y políticas
+        'procedimiento', 'proceso', 'política', 'politica', 'lineamiento',
+        'norma', 'regla', 'protocolo', 'instructivo', 'metodología',
+        
+        // Validaciones y controles
+        'validacion', 'validación', 'control', 'verificacion', 'verificación',
+        'requisito', 'campo', 'parametro', 'parámetro', 'formato',
+        
+        // ✅ NUEVA CATEGORÍA: Preguntas técnicas generales
+        'como funciona', 'cómo funciona', 'que es', 'qué es',
+        'para que sirve', 'para qué sirve', 'como se usa', 'cómo se usa',
+        'como hacer', 'cómo hacer', 'instrucciones', 'pasos',
+        
+        // ✅ NUEVA CATEGORÍA: Referencias específicas Nova
+        'nova', 'sistema nova', 'plataforma', 'servicio',
+        'configuracion', 'configuración', 'parametrizacion', 'setup',
+        
+        // ✅ NUEVA CATEGORÍA: Consultas informativas
+        'información', 'informacion', 'detalles', 'explicación',
+        'explicacion', 'descripcion', 'descripción'
+    ];
+    
+    const needsSearch = documentKeywords.some(keyword => mensajeLower.includes(keyword));
+    
+    // ✅ LÓGICA ADICIONAL: Detectar preguntas (interrogativas)
+    const esPreguntas = mensajeLower.match(/^(qué|que|cómo|como|cuál|cual|dónde|donde|cuándo|cuando|por qué|por que|para qué|para que)/);
+    
+    const finalDecision = needsSearch || esPreguntas;
+    
+    if (finalDecision) {
+        console.log(`📚 [MEJORADO] Búsqueda de documentos requerida para: "${mensaje.substring(0, 50)}..."`);
+        if (needsSearch) {
+            console.log(`   🎯 Palabras clave: ${documentKeywords.filter(k => mensajeLower.includes(k)).join(', ')}`);
+        }
+        if (esPreguntas) {
+            console.log(`   ❓ Detectada pregunta interrogativa`);
+        }
+    }
+    
+    return finalDecision;
+}
+
+// 6️⃣ COMANDO DE DEBUGGING para probar manualmente
+async testRAGManual(consulta, userId = 'test') {
+    console.log(`🧪 [${userId}] === TEST RAG MANUAL ===`);
+    console.log(`🔍 [${userId}] Consulta: "${consulta}"`);
+    
+    // Test paso a paso
+    try {
+        // 1. Test embedding
+        if (this.openaiAvailable) {
+            const vector = await this.createEmbedding(consulta);
+            console.log(`✅ [${userId}] Embedding creado: ${vector.length}D`);
+        }
+        
+        // 2. Test búsqueda RAG
+        const resultados = await this.buscarDocumentosRaw(consulta, userId, {
+            k: 5,
+            kNeighbors: 15
+        });
+        
+        console.log(`📊 [${userId}] Resultados RAG: ${resultados.length}`);
+        
+        // 3. Test construcción de contexto
+        if (resultados.length > 0) {
+            const contexto = this.construirContextoRAG(resultados);
+            console.log(`📄 [${userId}] Contexto construido: ${contexto.length} caracteres`);
+            
+            return {
+                success: true,
+                resultados,
+                contexto: contexto.substring(0, 500) + '...'
+            };
+        } else {
+            return {
+                success: false,
+                mensaje: 'No se encontraron documentos'
+            };
+        }
+        
+    } catch (error) {
+        console.error(`❌ [${userId}] Error en test RAG:`, error.message);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
 }
 
 /**

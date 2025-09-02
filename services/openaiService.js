@@ -82,7 +82,7 @@ class AzureOpenAIService {
         model: this.deploymentName,
         messages: [{ role: 'user', content: 'ping' }],
         max_completion_tokens: 5,
-        temperature: 0
+        temperature: 1.0
       });
       if (testResponse?.choices?.length) {
         console.log('✅ Test de conectividad Azure OpenAI exitoso');
@@ -281,11 +281,9 @@ ${contexto}
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.3,
+        temperature: 1.0,
         max_completion_tokens: 1500,
         top_p: 0.9,
-        frequency_penalty: 0.1,
-        presence_penalty: 0.1
       });
 
       let respuesta = completion.choices?.[0]?.message?.content?.trim();
@@ -535,7 +533,7 @@ Tu nombre es Nova-AI, asistente virtual de Nova.
     const finalResponse = await this.openai.chat.completions.create({
       model: this.deploymentName,
       messages: finalMessages,
-      temperature: 0.7,
+      temperature: 1.0,
       max_completion_tokens: 2000
     });
 
@@ -901,7 +899,7 @@ Tu nombre es Nova-AI, asistente virtual de Nova.
           { role: 'system', content: 'Eres un analista experto en conversaciones corporativas.' },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.3,
+        temperature: 1.0,
         max_completion_tokens: 2000
       });
 

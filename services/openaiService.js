@@ -388,7 +388,7 @@ ${contexto}
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
         ],
-        temperature: 0.2,
+        temperature: 1.0,
         max_completion_tokens: 600
     });
 

@@ -409,6 +409,97 @@ async buscarDocumentos(consulta, userId = 'unknown') {
     }
 }
 
+// 🔽 Pega dentro de la clase DocumentService
+
+/**
+ * ✅ NUEVO: Buscar documentos y devolver resultados RAW (para RAG)
+ * Retorna un arreglo [{ fileName, folder, chunk, score }]
+ */
+async buscarDocumentosRaw(consulta, userId = 'unknown', options = {}) {
+    console.log(`🚀 [${userId}] === BÚSQUEDA RAW PARA RAG ===`);
+    if (!this.searchAvailable) {
+        throw new Error(this.initializationError || 'Azure Search no configurado');
+    }
+
+    const {
+        k = 6,                 // top resultados finales
+        kNeighbors = 15,       // vecinos para vector
+        select = ['Chunk', 'FileName', 'Folder'],
+        maxPerFile = 2         // evita demasiados chunks por archivo
+    } = options;
+
+    // 1) Sanitizar
+    const consultaSanitizada = this.sanitizeQuery(consulta);
+
+    // 2) Intentar vector
+    let vectorQuery = null;
+    if (this.openaiAvailable) {
+        try {
+            const vector = await this.createEmbedding(consulta);
+            vectorQuery = {
+                kNearestNeighborsCount: kNeighbors,
+                fields: this.vectorField,
+                vector
+            };
+        } catch (e) {
+            console.warn('⚠️ Vector query no disponible, se usa solo texto:', e.message);
+        }
+    }
+
+    // 3) Opciones de búsqueda (híbrida si hay vector)
+    const searchOptions = {
+        select,
+        top: Math.max(k * 4, 20),
+        searchMode: 'any',
+        queryType: 'simple',
+        includeTotalCount: true
+    };
+    if (vectorQuery) searchOptions.vectorQueries = [vectorQuery];
+
+    // 4) Ejecutar
+    const it = await this.searchClient.search(consultaSanitizada, searchOptions);
+
+    // 5) Post-proceso: dedupe + limitar por archivo
+    const porArchivo = new Map();
+    const out = [];
+    for await (const r of it.results) {
+        const d = r.document || {};
+        const file = d.FileName || '(sin nombre)';
+        const chunk = (d.Chunk || '').trim();
+        if (!chunk) continue;
+
+        if (!porArchivo.has(file)) porArchivo.set(file, 0);
+        if (porArchivo.get(file) >= maxPerFile) continue;
+
+        porArchivo.set(file, porArchivo.get(file) + 1);
+        out.push({
+            fileName: file,
+            folder: d.Folder || '',
+            chunk,
+            score: r.score || 0
+        });
+
+        if (out.length >= k) break;
+    }
+
+    console.log(`✅ RAW listo (${out.length} chunks)`);
+    return out;
+}
+
+/**
+ * ✅ NUEVO: Helper para construir contexto compacto para RAG
+ * Une los mejores chunks con delimitadores y metadatos.
+ */
+construirContextoRAG(resultadosRaw) {
+    if (!Array.isArray(resultadosRaw) || resultadosRaw.length === 0) return '';
+    const piezas = resultadosRaw.map((r, i) => {
+        const header = `[[DOC ${i+1} — ${r.fileName}${r.folder ? ' | ' + r.folder : ''}]]`;
+        const body = r.chunk.length > 1600 ? (r.chunk.slice(0, 1600) + '…') : r.chunk;
+        return `${header}\n${body}`;
+    });
+    return piezas.join('\n\n---\n\n');
+}
+
     /**
      * ✅ BÚSQUEDA AMPLIADA corregida
      */

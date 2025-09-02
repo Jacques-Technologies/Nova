@@ -346,135 +346,129 @@ class AzureOpenAIService {
     /**
      * ✅ MÉTODO PRINCIPAL MEJORADO: Procesar mensaje con búsqueda automática de documentos
      */
-    async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
-        try {
-            if (!this.openaiAvailable) {
-                return this.createUnavailableResponse();
-            }
+// 🔽 Dentro de class AzureOpenAIService
 
-            if (!this.initialized) {
-                console.warn('⚠️ Azure OpenAI no inicializado, reintentando...');
-                this.initializeAzureOpenAI();
-                
-                if (!this.openaiAvailable) {
-                    return this.createUnavailableResponse();
+async procesarMensaje(mensaje, historial = [], userToken = null, userInfo = null, conversationId = null) {
+    try {
+        if (!this.openaiAvailable) return this.createUnavailableResponse();
+        if (!this.initialized) {
+            this.initializeAzureOpenAI();
+            if (!this.openaiAvailable) return this.createUnavailableResponse();
+        }
+
+        const userId = userInfo?.usuario || 'unknown';
+        console.log(`📝 [${userId}] Procesando: "${(mensaje||'').slice(0,80)}..."`);
+
+        // 1) ¿Se requiere búsqueda?
+        let resultadosRAG = null;
+        if (this.needsDocumentSearch(mensaje) && documentService.isAvailable()) {
+            try {
+                resultadosRAG = await documentService.buscarDocumentosRaw(mensaje, userId, {
+                    k: 6, kNeighbors: 15, maxPerFile: 2
+                });
+            } catch (e) {
+                console.warn('⚠️ Búsqueda RAW falló, sigo sin RAG:', e.message);
+            }
+        }
+
+        // 2) Si hay RAG → síntesis con gpt-5-mini (respuesta única)
+        if (Array.isArray(resultadosRAG) && resultadosRAG.length > 0) {
+            console.log(`📚 [${userId}] Usando RAG con ${resultadosRAG.length} chunks`);
+            const respuestaConcreta = await this.generarRespuestaConDocumentos(
+                mensaje,
+                resultadosRAG,
+                userInfo
+            );
+
+            // Adjunta metadata y retorna
+            return {
+                type: 'text',
+                content: respuestaConcreta,
+                metadata: {
+                    formatUsed: 'rag-synthesis',
+                    modelUsed: this.deploymentName,
+                    azureDeployment: this.deploymentName,
+                    apiVersion: this.apiVersion,
+                    docChunks: resultadosRAG.map(r => ({ fileName: r.fileName, folder: r.folder })),
+                    documentSearchUsed: true
                 }
-            }
-
-            console.log(`📝 [${userInfo?.usuario || 'unknown'}] Procesando: "${mensaje.substring(0, 50)}..."`);
-            console.log(`📚 [${userInfo?.usuario || 'unknown'}] Historial recibido: ${historial.length} mensajes`);
-
-            // ✅ NUEVA FUNCIONALIDAD: Búsqueda automática de documentos para preguntas técnicas
-            let documentContext = '';
-            if (this.needsDocumentSearch(mensaje)) {
-                console.log(`🔍 [${userInfo?.usuario || 'unknown'}] Pregunta técnica detectada, buscando en documentos...`);
-                documentContext = await this.buscarDocumentosAutomaticamente(mensaje, userInfo?.usuario || 'unknown');
-            }
-
-            // ✅ DECISIÓN INTELIGENTE: Usar formato de conversación OpenAI si está disponible
-            let mensajesParaIA = [];
-            let usingOpenAIFormat = false;
-
-            if (cosmosService.isAvailable() && conversationId) {
-                try {
-                    console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Intentando usar formato de conversación OpenAI...`);
-                    
-                    const openaiConversation = await cosmosService.getConversationForOpenAI(
-                        conversationId,
-                        userInfo?.usuario || 'unknown',
-                        true // incluir mensaje del sistema
-                    );
-
-                    if (openaiConversation && openaiConversation.length > 0) {
-                        mensajesParaIA = [...openaiConversation];
-                        usingOpenAIFormat = true;
-                        console.log(`✅ [${userInfo?.usuario || 'unknown'}] Usando formato de conversación OpenAI: ${mensajesParaIA.length} mensajes`);
-                    } else {
-                        console.log(`⚠️ [${userInfo?.usuario || 'unknown'}] Formato OpenAI vacío, fallback a historial tradicional`);
-                    }
-                } catch (openaiFormatError) {
-                    console.warn(`⚠️ [${userInfo?.usuario || 'unknown'}] Error obteniendo formato OpenAI:`, openaiFormatError.message);
-                }
-            }
-
-            // ✅ FALLBACK: Usar historial tradicional si formato OpenAI no está disponible
-            if (!usingOpenAIFormat) {
-                console.log(`📋 [${userInfo?.usuario || 'unknown'}] Usando historial tradicional formateado`);
-                mensajesParaIA = this.formatearHistorialTradicional(historial, userInfo, documentContext);
-            } else if (documentContext) {
-                // ✅ Agregar contexto de documentos al sistema si se usa formato OpenAI
-                const systemMessageIndex = mensajesParaIA.findIndex(msg => msg.role === 'system');
-                if (systemMessageIndex !== -1) {
-                    mensajesParaIA[systemMessageIndex].content += `\n\n🔍 **INFORMACIÓN DE DOCUMENTOS ENCONTRADA:**\n${documentContext}`;
-                    console.log(`📚 [${userInfo?.usuario || 'unknown'}] Contexto de documentos agregado al sistema OpenAI`);
-                }
-            }
-
-            // ✅ AGREGAR: Mensaje actual del usuario
-            mensajesParaIA.push({ role: "user", content: mensaje });
-
-            // ✅ Configuración para Azure OpenAI
-            const requestConfig = {
-                model: this.deploymentName, // Usar deployment name
-                messages: mensajesParaIA,
-                temperature: this.calculateTemperature(mensaje),
-                max_completion_tokens: this.calculateMaxTokens(mensaje)
             };
+        }
 
-            // ✅ Usar herramientas solo cuando sea apropiado
-            if (this.shouldUseTools(mensaje)) {
-                requestConfig.tools = this.tools;
-                requestConfig.tool_choice = "auto";
-                console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Habilitando herramientas para esta consulta`);
-            }
+        // 3) SIN RAG → tu flujo tradicional (conversación/historial)
+        let mensajesParaIA = [];
+        let usingOpenAIFormat = false;
 
-            console.log(`🤖 [${userInfo?.usuario || 'unknown'}] Enviando a Azure OpenAI (${requestConfig.model}, formato: ${usingOpenAIFormat ? 'OpenAI' : 'tradicional'})...`);
-            const response = await this.openai.chat.completions.create(requestConfig);
-            
-            if (!response?.choices?.length) {
-                throw new Error('Respuesta vacía de Azure OpenAI');
-            }
-            
-            const messageResponse = response.choices[0].message;
-            let finalResponse;
-
-            if (messageResponse.tool_calls) {
-                console.log(`🛠️ [${userInfo?.usuario || 'unknown'}] Ejecutando ${messageResponse.tool_calls.length} herramientas...`);
-                finalResponse = await this.procesarHerramientas(
-                    messageResponse, 
-                    mensajesParaIA, 
-                    userToken, 
-                    userInfo,
-                    conversationId
+        if (cosmosService.isAvailable() && conversationId) {
+            try {
+                const openaiConversation = await cosmosService.getConversationForOpenAI(
+                    conversationId, userId, true
                 );
-            } else {
-                finalResponse = {
-                    type: 'text',
-                    content: messageResponse.content || 'Respuesta vacía de Azure OpenAI'
-                };
+                if (openaiConversation?.length) {
+                    mensajesParaIA = [...openaiConversation];
+                    usingOpenAIFormat = true;
+                }
+            } catch {
+                /* fallback abajo */
             }
+        }
 
-            console.log(`✅ [${userInfo?.usuario || 'unknown'}] Respuesta generada exitosamente`);
-            
-            // ✅ METADATA: Agregar información sobre el formato usado
+        if (!usingOpenAIFormat) {
+            mensajesParaIA = this.formatearHistorialTradicional(historial, userInfo, '');
+        }
+        mensajesParaIA.push({ role: 'user', content: mensaje });
+
+        const requestConfig = {
+            model: this.deploymentName,                 // ✅ usa tu deployment
+            messages: mensajesParaIA,
+            temperature: this.calculateTemperature(mensaje),
+            max_completion_tokens: this.calculateMaxTokens(mensaje)
+        };
+        if (this.shouldUseTools(mensaje)) {
+            requestConfig.tools = this.tools;
+            requestConfig.tool_choice = 'auto';
+        }
+
+        const response = await this.openai.chat.completions.create(requestConfig);
+        const messageResponse = response.choices?.[0]?.message;
+        if (!messageResponse) throw new Error('Respuesta vacía de Azure OpenAI');
+
+        if (messageResponse.tool_calls) {
+            const finalResponse = await this.procesarHerramientas(
+                messageResponse, mensajesParaIA, userToken, userInfo, conversationId
+            );
             finalResponse.metadata = {
                 formatUsed: usingOpenAIFormat ? 'openai-conversation' : 'traditional-history',
-                messagesProcessed: mensajesParaIA.length,
                 modelUsed: requestConfig.model,
-                toolsUsed: !!messageResponse.tool_calls,
-                documentSearchUsed: !!documentContext,
+                toolsUsed: true,
+                documentSearchUsed: false,
                 azureDeployment: this.deploymentName,
                 apiVersion: this.apiVersion,
-                usage: response.usage // Información de uso de tokens
+                usage: response.usage
             };
-            
             return finalResponse;
-
-        } catch (error) {
-            console.error('❌ Error en procesarMensaje:', error);
-            return this.manejarErrorOpenAI(error, userInfo);
+        } else {
+            return {
+                type: 'text',
+                content: messageResponse.content || 'Respuesta vacía de Azure OpenAI',
+                metadata: {
+                    formatUsed: usingOpenAIFormat ? 'openai-conversation' : 'traditional-history',
+                    modelUsed: requestConfig.model,
+                    toolsUsed: false,
+                    documentSearchUsed: false,
+                    azureDeployment: this.deploymentName,
+                    apiVersion: this.apiVersion,
+                    usage: response.usage
+                }
+            };
         }
+
+    } catch (error) {
+        console.error('❌ Error en procesarMensaje:', error);
+        return this.manejarErrorOpenAI(error, userInfo);
     }
+}
+
 
     /**
      * ✅ NUEVA FUNCIÓN: Detectar si se necesita búsqueda de documentos
@@ -1008,7 +1002,7 @@ ${historial.length > 0 ?
 
             // Usar OpenAI para analizar la conversación
             const analisisResponse = await this.openai.chat.completions.create({
-                model: "gpt-4o-mini",
+                model: "gpt-5-mini",
                 messages: [
                     {
                         role: "system",
@@ -1171,7 +1165,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             // ✅ FALLBACK: Resumen básico
             if (incluirEstadisticas) {
                 resumen += `💾 **Persistencia**: ${cosmosService.isAvailable() ? 'Cosmos DB' : 'Solo memoria'}\n`;
-                resumen += `🤖 **IA**: OpenAI GPT-4o-mini\n`;
+                resumen += `🤖 **IA**: OpenAI gpt-5-mini\n`;
             }
             
             resumen += `\n💡 **Para ver el historial completo**:\n`;
@@ -1593,11 +1587,11 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             mensajeLower.includes('saldo') ||
             mensajeLower.includes('resumen') ||
             mensaje.length > 200) {
-            return "gpt-4o-mini";
+            return "gpt-5-mini";
         }
         
-        // Para consultas simples, también usar GPT-4o-mini (es eficiente)
-        return "gpt-4o-mini";
+        // Para consultas simples, también usar gpt-5-mini (es eficiente)
+        return "gpt-5-mini";
     }
 
     calculateTemperature(mensaje) {
@@ -1681,7 +1675,7 @@ Enfoque: Estratégico y orientado a resultados comerciales.`
             initialized: this.initialized,
             available: this.openaiAvailable,
             error: this.initializationError,
-            modelsAvailable: ['gpt-4o-mini'],
+            modelsAvailable: ['gpt-5-mini'],
             featuresEnabled: {
                 basic_conversation: true,
                 tools: true,

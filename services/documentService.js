@@ -272,122 +272,142 @@ class DocumentService {
     }
 
     /**
-     * ✅ MÉTODO PRINCIPAL CORREGIDO: Buscar documentos (HÍBRIDO: Vector + Texto)
-     */
-    async buscarDocumentos(consulta, userId = 'unknown') {
-        if (!this.searchAvailable) {
-            return `⚠️ **Servicio de búsqueda no disponible**\n\n${this.initializationError || 'Azure Search no configurado'}`;
-        }
-
-        try {
-            // ✅ CRÍTICO: Sanitizar consulta ANTES de usar
-            const consultaSanitizada = this.sanitizeQuery(consulta);
-            console.log(`🔍 [${userId}] Búsqueda: "${consulta}" → "${consultaSanitizada}"`);
-
-            let vectorQuery = null;
-            
-            // Intentar crear embedding para búsqueda vectorial
-            if (this.openaiAvailable) {
-                try {
-                    console.log(`🧠 [${userId}] Creando embedding para búsqueda vectorial...`);
-                    const vector = await this.createEmbedding(consulta); // Usar consulta original para embedding
-                    
-                    vectorQuery = {
-                        kNearestNeighborsCount: 15,
-                        fields: this.vectorField,
-                        vector
-                    };
-                    
-                    console.log(`✅ [${userId}] Vector query configurado`);
-                    
-                } catch (embError) {
-                    console.error(`❌ [${userId}] Error creando embedding:`, embError.message);
-                    console.log(`🔄 [${userId}] Continuando con búsqueda solo textual`);
-                }
-            }
-            
-            // ✅ Configurar opciones de búsqueda con query sanitizada
-            const searchOptions = {
-                select: ['Chunk', 'FileName', 'Folder'],
-                top: 20,
-                searchMode: 'any',
-                queryType: 'simple', // ✅ CAMBIO CRÍTICO: usar 'simple' en lugar de 'full'
-                includeTotalCount: true
-            };
-            
-            if (vectorQuery) {
-                searchOptions.vectorQueries = [vectorQuery];
-                console.log(`🎯 [${userId}] Ejecutando búsqueda HÍBRIDA (vector + texto)`);
-            } else {
-                console.log(`📝 [${userId}] Ejecutando búsqueda SOLO TEXTO`);
-            }
-
-            console.log('🔎 [DocumentService] Opciones de búsqueda:', {
-                searchText: consultaSanitizada,
-                hasVectorQuery: !!vectorQuery,
-                queryType: searchOptions.queryType,
-                top: searchOptions.top
-            });
-            
-            // ✅ USAR CONSULTA SANITIZADA
-            const searchResults = await this.searchClient.search(consultaSanitizada, searchOptions);
-
-            console.log(`🔍 [${userId}] Procesando resultados... Total: ${searchResults.count || 'N/A'}`);
-            
-            const resultados = [];
-            const documentosProcesados = new Set();
-            
-            for await (const result of searchResults.results) {
-                const doc = result.document || {};
-                const score = result.score || 0;
-                
-                const fileName = doc.FileName || '(sin nombre)';
-                const folder = doc.Folder || '';
-                const chunkSrc = doc.Chunk || '';
-                const chunk = chunkSrc.substring(0, 400) + (chunkSrc.length > 400 ? '...' : '');
-                
-                const documentKey = `${fileName}-${chunkSrc.substring(0, 50)}`;
-                
-                if (!documentosProcesados.has(documentKey)) {
-                    documentosProcesados.add(documentKey);
-                    resultados.push({
-                        fileName,
-                        folder,
-                        chunk,
-                        score,
-                        fullChunk: chunkSrc
-                    });
-                }
-                
-                if (resultados.length >= 10) break;
-            }
-            
-            console.log(`📊 [${userId}] Resultados finales: ${resultados.length}`);
-            
-            if (resultados.length === 0) {
-                console.log(`🔄 [${userId}] Sin resultados, intentando búsqueda ampliada...`);
-                return await this.busquedaAmpliada(consulta, userId);
-            }
-            
-            return this.formatearResultados(resultados, consulta, userId);
-                
-        } catch (error) {
-            console.error(`❌ [${userId}] Error en búsqueda:`, {
-                message: error.message,
-                statusCode: error.statusCode,
-                code: error.code
-            });
-            
-            // ✅ Información adicional para debugging
-            if (error.statusCode === 400) {
-                console.error(`❌ [${userId}] Query problemática: "${consulta}"`);
-                console.error(`❌ [${userId}] Consulta sanitizada: "${this.sanitizeQuery(consulta)}"`);
-                return `❌ **Error de sintaxis en búsqueda**: La consulta contiene caracteres no válidos. Intenta reformular tu pregunta con palabras más simples.`;
-            }
-            
-            return `❌ **Error en búsqueda de documentos**: ${error.message}`;
-        }
+ * ✅ MÉTODO PRINCIPAL CON DEBUG: Buscar documentos
+ */
+async buscarDocumentos(consulta, userId = 'unknown') {
+    console.log(`🚀 [${userId}] === INICIO BÚSQUEDA DOCUMENTOS ===`);
+    
+    if (!this.searchAvailable) {
+        const errorMsg = `⚠️ **Servicio de búsqueda no disponible**\n\n${this.initializationError || 'Azure Search no configurado'}`;
+        console.log(`❌ [${userId}] Service no disponible, retornando: "${errorMsg.substring(0, 100)}..."`);
+        return errorMsg;
     }
+
+    try {
+        const consultaSanitizada = this.sanitizeQuery(consulta);
+        console.log(`🔍 [${userId}] Búsqueda: "${consulta}" → "${consultaSanitizada}"`);
+
+        let vectorQuery = null;
+        
+        // Intentar crear embedding para búsqueda vectorial
+        if (this.openaiAvailable) {
+            try {
+                console.log(`🧠 [${userId}] Creando embedding...`);
+                const vector = await this.createEmbedding(consulta);
+                
+                vectorQuery = {
+                    kNearestNeighborsCount: 15,
+                    fields: this.vectorField,
+                    vector
+                };
+                
+                console.log(`✅ [${userId}] Vector query configurado (${vector.length}D)`);
+                
+            } catch (embError) {
+                console.error(`❌ [${userId}] Error creando embedding:`, embError.message);
+                console.log(`🔄 [${userId}] Continuando con búsqueda solo textual`);
+            }
+        }
+        
+        // Configurar opciones de búsqueda
+        const searchOptions = {
+            select: ['Chunk', 'FileName', 'Folder'],
+            top: 20,
+            searchMode: 'any',
+            queryType: 'simple',
+            includeTotalCount: true
+        };
+        
+        if (vectorQuery) {
+            searchOptions.vectorQueries = [vectorQuery];
+            console.log(`🎯 [${userId}] Ejecutando búsqueda HÍBRIDA`);
+        } else {
+            console.log(`📝 [${userId}] Ejecutando búsqueda SOLO TEXTO`);
+        }
+
+        console.log(`🔎 [${userId}] Ejecutando búsqueda en Azure...`);
+        const searchResults = await this.searchClient.search(consultaSanitizada, searchOptions);
+
+        console.log(`📊 [${userId}] Procesando resultados... Total: ${searchResults.count || 'N/A'}`);
+        
+        const resultados = [];
+        const documentosProcesados = new Set();
+        let resultadosIterados = 0;
+        
+        for await (const result of searchResults.results) {
+            resultadosIterados++;
+            console.log(`🔄 [${userId}] Procesando resultado ${resultadosIterados}:`, {
+                score: result.score,
+                hasDocument: !!result.document,
+                fileName: result.document?.FileName || 'N/A',
+                chunkLength: result.document?.Chunk?.length || 0
+            });
+            
+            const doc = result.document || {};
+            const score = result.score || 0;
+            
+            const fileName = doc.FileName || '(sin nombre)';
+            const folder = doc.Folder || '';
+            const chunkSrc = doc.Chunk || '';
+            const chunk = chunkSrc.substring(0, 400) + (chunkSrc.length > 400 ? '...' : '');
+            
+            const documentKey = `${fileName}-${chunkSrc.substring(0, 50)}`;
+            
+            if (!documentosProcesados.has(documentKey)) {
+                documentosProcesados.add(documentKey);
+                const resultado = {
+                    fileName,
+                    folder,
+                    chunk,
+                    score,
+                    fullChunk: chunkSrc
+                };
+                
+                resultados.push(resultado);
+                console.log(`✅ [${userId}] Agregado resultado: ${fileName} (score: ${score.toFixed(3)})`);
+            } else {
+                console.log(`⚠️ [${userId}] Resultado duplicado omitido: ${fileName}`);
+            }
+            
+            if (resultados.length >= 10) {
+                console.log(`🛑 [${userId}] Límite de resultados alcanzado (10)`);
+                break;
+            }
+        }
+        
+        console.log(`📋 [${userId}] === RESUMEN PROCESAMIENTO ===`);
+        console.log(`   Resultados iterados: ${resultadosIterados}`);
+        console.log(`   Resultados finales: ${resultados.length}`);
+        console.log(`   Documentos procesados: ${documentosProcesados.size}`);
+        
+        if (resultados.length === 0) {
+            console.log(`❌ [${userId}] Sin resultados, intentando búsqueda ampliada...`);
+            const resultadoAmpliado = await this.busquedaAmpliada(consulta, userId);
+            console.log(`🔄 [${userId}] Búsqueda ampliada retornó: "${resultadoAmpliado.substring(0, 100)}..."`);
+            return resultadoAmpliado;
+        }
+        
+        console.log(`🎨 [${userId}] Formateando ${resultados.length} resultados...`);
+        const respuestaFinal = this.formatearResultados(resultados, consulta, userId);
+        
+        console.log(`✅ [${userId}] === FIN BÚSQUEDA DOCUMENTOS ===`);
+        console.log(`📤 [${userId}] Respuesta final (${respuestaFinal.length} chars): "${respuestaFinal.substring(0, 150)}..."`);
+        
+        return respuestaFinal;
+            
+    } catch (error) {
+        console.error(`❌ [${userId}] === ERROR EN BÚSQUEDA ===`, {
+            message: error.message,
+            statusCode: error.statusCode,
+            code: error.code,
+            stack: error.stack?.split('\n').slice(0, 3)
+        });
+        
+        const errorMsg = `❌ **Error en búsqueda de documentos**: ${error.message}`;
+        console.log(`📤 [${userId}] Retornando error: "${errorMsg}"`);
+        return errorMsg;
+    }
+}
 
     /**
      * ✅ BÚSQUEDA AMPLIADA corregida
@@ -440,17 +460,27 @@ class DocumentService {
     }
 
     /**
-     * ✅ FORMATEAR RESULTADOS
-     */
-    formatearResultados(resultados, consulta, userId) {
-        if (!Array.isArray(resultados) || resultados.length === 0) {
-            return this.sinResultados(consulta, userId);
-        }
+ * ✅ MÉTODO CORREGIDO: formatearResultados con debugging
+ */
+formatearResultados(resultados, consulta, userId) {
+    console.log(`🎨 [${userId}] Formateando ${resultados?.length || 0} resultados...`);
+    
+    if (!Array.isArray(resultados) || resultados.length === 0) {
+        console.log(`❌ [${userId}] No hay resultados para formatear`);
+        return this.sinResultados(consulta, userId);
+    }
 
-        let respuesta = `🔍 **Búsqueda: "${consulta}"**\n\n`;
-        respuesta += `📚 **Documentos encontrados (${resultados.length}):**\n\n`;
+    console.log(`📋 [${userId}] Resultados a formatear:`, resultados.map(r => ({
+        fileName: r.fileName,
+        score: r.score,
+        chunkLength: r.chunk?.length || 0
+    })));
 
-        resultados.forEach((resultado, index) => {
+    let respuesta = `🔍 **Búsqueda: "${consulta}"**\n\n`;
+    respuesta += `📚 **Documentos encontrados (${resultados.length}):**\n\n`;
+
+    resultados.forEach((resultado, index) => {
+        try {
             const folderInfo = resultado.folder ? ` [${resultado.folder}]` : '';
             respuesta += `**${index + 1}. ${resultado.fileName}**${folderInfo}`;
             
@@ -463,22 +493,35 @@ class DocumentService {
             }
             
             respuesta += '\n';
-            respuesta += `${resultado.chunk}\n`;
+            
+            // ✅ VERIFICAR que el chunk no esté vacío
+            const chunk = resultado.chunk || resultado.fullChunk || '(Sin contenido disponible)';
+            respuesta += `${chunk}\n`;
             
             if (index < resultados.length - 1) {
                 respuesta += '\n---\n\n';
             }
-        });
-
-        const searchType = this.openaiAvailable ? 
-            'Azure OpenAI + Azure Search (Híbrida)' : 
-            'Azure Search (Solo texto)';
             
-        respuesta += `\n\n💡 **Búsqueda realizada con ${searchType}**`;
-        respuesta += `\n¿Necesitas más información sobre algún documento específico?`;
+            console.log(`📄 [${userId}] Formateado resultado ${index + 1}: ${resultado.fileName}`);
+            
+        } catch (error) {
+            console.error(`❌ [${userId}] Error formateando resultado ${index}:`, error);
+            respuesta += `❌ Error procesando resultado ${index + 1}\n\n`;
+        }
+    });
+
+    const searchType = this.openaiAvailable ? 
+        'Azure OpenAI + Azure Search (Híbrida)' : 
+        'Azure Search (Solo texto)';
         
-        return respuesta;
-    }
+    respuesta += `\n\n💡 **Búsqueda realizada con ${searchType}**`;
+    respuesta += `\n¿Necesitas más información sobre algún documento específico?`;
+    
+    console.log(`✅ [${userId}] Respuesta formateada completamente (${respuesta.length} caracteres)`);
+    console.log(`📤 [${userId}] Primeros 200 caracteres: "${respuesta.substring(0, 200)}..."`);
+    
+    return respuesta;
+}
 
     /**
      * ✅ MENSAJE CUANDO NO HAY RESULTADOS

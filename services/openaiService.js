@@ -803,6 +803,8 @@ ${historial.length > 0 ?
                     parametros.incluir_sistema
                 );
 
+            case 'buscar_documentos_nova':
+                return await documentService.buscarDocumentos(parametros.consulta, parametros.tipo_busqueda || 'general');
             default:
                 throw new Error(`Herramienta desconocida: ${nombre}`);
         }

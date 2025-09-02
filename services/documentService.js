@@ -188,7 +188,7 @@ ${contexto}
 Proporciona una respuesta UNIFICADA que sintetice toda la información relevante de los documentos para responder la pregunta. No presentes los documentos por separado, sino combina la información en una sola respuesta coherente.`;
 
             const response = await this.openaiClient.chat.completions.create({
-                model: 'gpt-4', // Usar el modelo configurado
+                model: 'gpt-5-mini', // Usar el modelo configurado
                 messages: [
                     { role: 'system', content: systemPrompt },
                     { role: 'user', content: userPrompt }

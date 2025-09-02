@@ -741,7 +741,7 @@ CONTEXTO:
     const finalResponse = await this.openai.chat.completions.create({
       model: this.deploymentName,
       messages: finalMessages,
-      temperature: 0.7,
+      temperature: 1.0,
       max_completion_tokens: 3000
     });
 

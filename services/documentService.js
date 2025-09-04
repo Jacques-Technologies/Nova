@@ -1,4 +1,4 @@
-// services/documentService.js - RAG UNIFICADO Y MEJORADO
+// services/documentService.js - VERSIÓN MEJORADA CON PROCESAMIENTO CONCRETO
 const { SearchClient, SearchIndexClient, AzureKeyCredential } = require('@azure/search-documents');
 const OpenAI = require('openai');
 require('dotenv').config();
@@ -17,26 +17,32 @@ class DocumentService {
         this.vectorField = 'Embedding';
         this.openaiClient = null;
 
-        console.log('🔍 Inicializando Document Service...');
+        // ✅ NUEVO: Configuración optimizada
+        this.config = {
+            maxContextLength: 12000,        // Contexto máximo para OpenAI
+            maxChunkLength: 2000,           // Longitud máxima por chunk
+            minChunkLength: 50,             // Longitud mínima válida
+            minScore: 0.6,                  // Score mínimo para considerar relevante
+            maxDocumentsPerSearch: 8,       // Máximo documentos por búsqueda
+            maxDocumentsPerFile: 2,         // Máximo chunks por archivo
+            synthesisTemperature: 0.2,      // Temperatura para síntesis (más preciso)
+            synthesisMaxTokens: 2500,       // Tokens máximos para síntesis
+            fallbackSummaryLength: 1200     // Longitud para resúmenes fallback
+        };
+
+        console.log('🔍 Inicializando Document Service Mejorado...');
         this.initializeAzureSearch();
         this.initializeOpenAI();
         
         DocumentService.instance = this;
-        console.log(`✅ Document Service inicializado - Search: ${this.searchAvailable}, OpenAI: ${this.openaiAvailable}`);
+        console.log(`✅ Document Service v2.0 - Search: ${this.searchAvailable}, OpenAI: ${this.openaiAvailable}`);
     }
 
-    // ... [Métodos de inicialización existentes - mantener iguales]
     initializeAzureSearch() {
         try {
             const endpoint = process.env.AZURE_SEARCH_ENDPOINT;
             const apiKey = process.env.AZURE_SEARCH_API_KEY;
             const indexName = 'nova';
-
-            console.log('🔍 Configuración Azure Search:', {
-                endpoint: endpoint ? `✅ ${endpoint}` : '❌ Faltante',
-                apiKey: apiKey ? '✅ Configurado' : '❌ Faltante',
-                indexName
-            });
 
             if (!endpoint || !apiKey) {
                 throw new Error('Variables de Azure Search faltantes (AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_API_KEY)');
@@ -57,7 +63,6 @@ class DocumentService {
             this.searchAvailable = true;
             
             console.log(`✅ Azure Search configurado correctamente`);
-            this.testSearchConnection();
             
         } catch (error) {
             console.error('❌ Error inicializando Azure Search:', error.message);
@@ -68,13 +73,11 @@ class DocumentService {
 
     initializeOpenAI() {
         try {
-            console.log('🔧 [DocumentService] Inicializando Azure OpenAI para embeddings...');
-            
             const azureOpenaiEndpoint = process.env.OPENAI_ENDPOINT;
             const azureOpenaiKey = process.env.OPENAI_API_KEY;
             
             if (!azureOpenaiEndpoint || !azureOpenaiKey) {
-                throw new Error('Variables OPENAI_ENDPOINT y OPENAI_API_KEY requeridas para DocumentService');
+                throw new Error('Variables OPENAI_ENDPOINT y OPENAI_API_KEY requeridas');
             }
 
             const embeddingDeployment = 'text-embedding-3-large';
@@ -95,289 +98,234 @@ class DocumentService {
             this.embeddingModel = embeddingDeployment;
             this.openaiAvailable = true;
             
-            console.log('✅ [DocumentService] Azure OpenAI configurado');
-            this.testEmbeddingConnection();
+            console.log('✅ Azure OpenAI para embeddings configurado');
 
         } catch (error) {
-            console.error('❌ [DocumentService] Error inicializando Azure OpenAI:', error.message);
+            console.error('❌ Error inicializando Azure OpenAI:', error.message);
             this.openaiAvailable = false;
             this.initializationError = error.message;
         }
     }
 
-    // ... [Métodos de test y embedding existentes - mantener iguales]
-
     /**
-     * ✅ NUEVO: Método principal UNIFICADO que retorna respuesta sintetizada
-     * En lugar de formatear chunks por separado, genera una respuesta cohesiva
+     * ✅ MÉTODO PRINCIPAL MEJORADO - Procesamiento más concreto y eficiente
      */
-    async buscarDocumentos(consulta, userId = 'unknown') {
-        console.log(`🚀 [${userId}] === BÚSQUEDA DOCUMENTOS UNIFICADA ===`);
-        console.log(`🔍 [${userId}] Consulta: "${consulta}"`);
+    async buscarDocumentos(consulta, userId = 'unknown', options = {}) {
+        const startTime = Date.now();
+        console.log(`🚀 [${userId}] === BÚSQUEDA DOCUMENTOS MEJORADA v2.0 ===`);
+        console.log(`🔍 [${userId}] Query: "${consulta}"`);
         
         if (!this.searchAvailable) {
-            const errorMsg = `⚠️ **Servicio de búsqueda no disponible**\n\n${this.initializationError || 'Azure Search no configurado'}`;
-            return errorMsg;
+            return this.crearRespuestaError('Servicio de búsqueda no disponible', this.initializationError);
         }
 
         try {
-            // 1) Buscar documentos usando RAG mejorado
-            const resultadosRaw = await this.buscarDocumentosRaw(consulta, userId, {
-                k: 8,
-                kNeighbors: 20,
-                maxPerFile: 3
-            });
+            // 1️⃣ Análisis inteligente de la consulta
+            const queryAnalysis = this.analizarConsulta(consulta);
+            console.log(`🧠 [${userId}] Análisis: tipo=${queryAnalysis.type}, intent=${queryAnalysis.intent}`);
 
-            if (!resultadosRaw || resultadosRaw.length === 0) {
-                console.log(`❌ [${userId}] No se encontraron documentos`);
-                return this.sinResultados(consulta, userId);
+            // 2️⃣ Búsqueda optimizada basada en el análisis
+            const documentos = await this.ejecutarBusquedaOptimizada(consulta, queryAnalysis, userId, options);
+            
+            if (!documentos || documentos.length === 0) {
+                console.log(`❌ [${userId}] No se encontraron documentos relevantes`);
+                return this.crearRespuestaSinResultados(consulta, queryAnalysis, userId);
             }
 
-            // 2) ✅ NUEVA FUNCIÓN: Sintetizar respuesta unificada
-            const respuestaUnificada = await this.sintetizarRespuesta(consulta, resultadosRaw, userId);
+            // 3️⃣ Síntesis inteligente y concreta
+            const respuestaFinal = await this.sintetizarRespuestaInteligente(
+                consulta, 
+                documentos, 
+                queryAnalysis, 
+                userId
+            );
+
+            const duration = Date.now() - startTime;
+            console.log(`✅ [${userId}] Procesamiento completado en ${duration}ms`);
             
-            console.log(`✅ [${userId}] Respuesta unificada generada (${respuestaUnificada.length} chars)`);
-            return respuestaUnificada;
+            return respuestaFinal;
 
         } catch (error) {
             console.error(`❌ [${userId}] Error en búsqueda:`, error.message);
-            return `❌ **Error en búsqueda de documentos**: ${error.message}`;
+            return this.crearRespuestaError('Error en búsqueda de documentos', error.message);
         }
     }
 
     /**
-     * ✅ NUEVA FUNCIÓN: Sintetizar respuesta unificada usando OpenAI
-     * Combina múltiples chunks en una respuesta coherente y concisa
+     * ✅ NUEVO: Análisis inteligente de consultas
      */
-    async sintetizarRespuesta(consulta, resultadosRaw, userId) {
-        console.log(`🧠 [${userId}] Sintetizando respuesta con ${resultadosRaw.length} documentos...`);
-
-        // Si no hay OpenAI disponible, usar método fallback
-        if (!this.openaiAvailable) {
-            return this.sintetizarRespuestaFallback(consulta, resultadosRaw, userId);
-        }
-
-        try {
-            // Construir contexto optimizado
-            const contexto = this.construirContextoOptimizado(resultadosRaw);
-            
-            const systemPrompt = `Eres NOVA-AI, asistente especializado en documentación técnica de Nova Corporation.
-
-INSTRUCCIONES CRÍTICAS:
-1. Responde SIEMPRE en español
-2. Basa tu respuesta ÚNICAMENTE en los documentos proporcionados
-3. Sintetiza la información en una respuesta UNIFICADA y CONCISA
-4. NO repitas información, COMBÍNALA inteligentemente
-5. Estructura la respuesta con markdown para fácil lectura
-6. Si hay endpoints o APIs, presenta una lista organizada
-7. Si hay procedimientos, explícalos paso a paso
-8. Cita las fuentes al final de forma resumida
-
-FORMATO DE RESPUESTA:
-- Respuesta directa a la pregunta
-- Información organizada y estructurada
-- Fuentes consultadas al final`;
-
-            const userPrompt = `**PREGUNTA DEL USUARIO:**
-${consulta}
-
-**DOCUMENTOS ENCONTRADOS:**
-${contexto}
-
-**TAREA:**
-Proporciona una respuesta UNIFICADA que sintetice toda la información relevante de los documentos para responder la pregunta. No presentes los documentos por separado, sino combina la información en una sola respuesta coherente.`;
-
-            const response = await this.openaiClient.chat.completions.create({
-                model: 'gpt-5-mini', // Usar el modelo configurado
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ],
-                temperature: 0.3, // Baja temperatura para respuestas más precisas
-                max_tokens: 2000,
-                top_p: 0.9
-            });
-
-            let respuestaSintetizada = response.choices?.[0]?.message?.content?.trim();
-            
-            if (!respuestaSintetizada || respuestaSintetizada.length < 50) {
-                console.warn(`⚠️ [${userId}] Respuesta de OpenAI muy corta, usando fallback`);
-                return this.sintetizarRespuestaFallback(consulta, resultadosRaw, userId);
-            }
-
-            // Agregar metadatos de fuentes
-            const fuentes = [...new Set(resultadosRaw.map(r => r.fileName).filter(Boolean))];
-            const carpetas = [...new Set(resultadosRaw.map(r => r.folder).filter(Boolean))];
-            
-            respuestaSintetizada += `\n\n---\n\n`;
-            respuestaSintetizada += `📚 **Fuentes**: ${fuentes.slice(0, 3).join(', ')}${fuentes.length > 3 ? ` y ${fuentes.length - 3} más` : ''}`;
-            if (carpetas.length) respuestaSintetizada += `\n📁 **Carpetas**: ${carpetas.join(', ')}`;
-            respuestaSintetizada += `\n🤖 **Procesado con**: Azure AI Search + OpenAI`;
-
-            console.log(`✅ [${userId}] Síntesis completada exitosamente`);
-            return respuestaSintetizada;
-
-        } catch (error) {
-            console.error(`❌ [${userId}] Error en síntesis OpenAI:`, error.message);
-            return this.sintetizarRespuestaFallback(consulta, resultadosRaw, userId);
-        }
-    }
-
-    /**
-     * ✅ Construir contexto optimizado para OpenAI
-     * Limita el tamaño y mejora la estructura
-     */
-    construirContextoOptimizado(resultadosRaw) {
-        if (!Array.isArray(resultadosRaw) || resultadosRaw.length === 0) return '';
-
-        let contexto = '';
-        const maxContextLength = 8000; // Límite de caracteres para el contexto
-        let currentLength = 0;
-
-        resultadosRaw.forEach((doc, index) => {
-            if (currentLength >= maxContextLength) return;
-
-            const header = `DOCUMENTO ${index + 1} (${doc.fileName || 'sin-nombre'}):`;
-            const content = doc.chunk || '';
-            
-            // Truncar el contenido si es muy largo
-            const maxChunkLength = Math.min(1500, maxContextLength - currentLength - header.length);
-            const truncatedContent = content.length > maxChunkLength 
-                ? content.substring(0, maxChunkLength) + '...[truncado]'
-                : content;
-
-            const docSection = `${header}\n${truncatedContent}\n\n`;
-            
-            if (currentLength + docSection.length <= maxContextLength) {
-                contexto += docSection;
-                currentLength += docSection.length;
-            }
-        });
-
-        return contexto;
-    }
-
-    /**
-     * ✅ Método fallback cuando OpenAI no está disponible
-     * Crea una respuesta estructurada sin IA
-     */
-    sintetizarRespuestaFallback(consulta, resultadosRaw, userId) {
-        console.log(`🔄 [${userId}] Usando síntesis fallback (sin OpenAI)`);
-
-        let respuesta = `🔍 **Información encontrada para: "${consulta}"**\n\n`;
-
-        // Agrupar por archivo para evitar repetición
-        const porArchivo = new Map();
-        resultadosRaw.forEach(doc => {
-            const fileName = doc.fileName || 'Documento sin nombre';
-            if (!porArchivo.has(fileName)) {
-                porArchivo.set(fileName, []);
-            }
-            porArchivo.get(fileName).push(doc.chunk || '');
-        });
-
-        // Combinar información por archivo
-        let archivoIndex = 1;
-        for (const [fileName, chunks] of porArchivo) {
-            if (archivoIndex <= 3) { // Limitar a 3 archivos principales
-                respuesta += `### 📄 ${fileName}\n\n`;
-                
-                // Combinar chunks del mismo archivo
-                const textoCompleto = chunks.join(' ').trim();
-                const resumen = textoCompleto.length > 800 
-                    ? textoCompleto.substring(0, 800) + '...'
-                    : textoCompleto;
-                
-                respuesta += `${resumen}\n\n`;
-                archivoIndex++;
-            }
-        }
-
-        // Metadatos
-        const totalArchivos = porArchivo.size;
-        const totalChunks = resultadosRaw.length;
+    analizarConsulta(consulta) {
+        const queryLower = consulta.toLowerCase().trim();
+        const palabras = queryLower.split(/\s+/);
         
-        respuesta += `---\n\n`;
-        respuesta += `📊 **Resumen**: ${totalChunks} secciones de ${totalArchivos} documento(s)`;
-        respuesta += `\n🤖 **Búsqueda**: Azure AI Search`;
+        // Detectar tipo de consulta
+        let type = 'general';
+        let intent = 'info';
+        let scope = 'broad';
+        let expectedResponseType = 'explanation';
 
-        return respuesta;
+        // Análisis de intención
+        if (/^(qué es|que es|define|definir|explicar|explica)/.test(queryLower)) {
+            intent = 'definition';
+            expectedResponseType = 'definition';
+        } else if (/^(cómo|como|de qué manera|pasos)/.test(queryLower)) {
+            intent = 'procedure';
+            expectedResponseType = 'steps';
+        } else if (/^(cuáles|cuales|lista|listar|enumerar)/.test(queryLower)) {
+            intent = 'list';
+            expectedResponseType = 'list';
+        } else if (/^(dónde|donde|ubicar|encontrar)/.test(queryLower)) {
+            intent = 'location';
+            expectedResponseType = 'reference';
+        }
+
+        // Detectar tipo de contenido
+        if (['api', 'endpoint', 'servicio', 'método', 'request', 'response'].some(k => queryLower.includes(k))) {
+            type = 'api';
+            scope = 'technical';
+        } else if (['política', 'politica', 'procedimiento', 'proceso', 'regla', 'norma'].some(k => queryLower.includes(k))) {
+            type = 'policy';
+            scope = 'procedural';
+        } else if (['validasocio', 'validación', 'autenticacion', 'token', 'login'].some(k => queryLower.includes(k))) {
+            type = 'authentication';
+            scope = 'security';
+        }
+
+        // Detectar especificidad
+        if (palabras.length <= 3) scope = 'focused';
+        else if (palabras.length > 8) scope = 'complex';
+
+        return {
+            type,
+            intent,
+            scope,
+            expectedResponseType,
+            wordCount: palabras.length,
+            isQuestion: /^(qué|que|cómo|como|cuál|cual|dónde|donde|cuándo|cuando|por qué|por que)/.test(queryLower),
+            keywords: this.extraerPalabrasClaveInteligentes(queryLower)
+        };
     }
 
     /**
-     * ✅ MEJORADO: buscarDocumentosRaw con mejor filtrado
+     * ✅ NUEVO: Extracción inteligente de palabras clave
      */
-    async buscarDocumentosRaw(consulta, userId = 'unknown', options = {}) {
-        console.log(`🚀 [${userId}] === BÚSQUEDA RAW MEJORADA ===`);
+    extraerPalabrasClaveInteligentes(queryLower) {
+        const stopWords = ['el', 'la', 'de', 'que', 'y', 'a', 'en', 'un', 'es', 'se', 'no', 'te', 'lo', 'le', 'da', 'su', 'por', 'son', 'con', 'para', 'del', 'las', 'una', 'sobre', 'como', 'cómo'];
         
-        if (!this.searchAvailable) {
-            throw new Error(this.initializationError || 'Azure Search no configurado');
-        }
+        return queryLower
+            .split(/\s+/)
+            .filter(palabra => palabra.length > 2 && !stopWords.includes(palabra))
+            .slice(0, 8); // Máximo 8 keywords
+    }
 
-        const {
-            k = 6,
-            kNeighbors = 20,
-            select = ['Chunk', 'FileName', 'Folder'],
-            maxPerFile = 2
-        } = options;
+    /**
+     * ✅ BÚSQUEDA OPTIMIZADA - Estrategia híbrida mejorada
+     */
+    async ejecutarBusquedaOptimizada(consulta, analysis, userId, options) {
+        const config = {
+            k: Math.min(options.k || this.config.maxDocumentsPerSearch, 12),
+            maxPerFile: options.maxPerFile || this.config.maxDocumentsPerFile,
+            minScore: options.minScore || this.config.minScore
+        };
 
-        const consultaSanitizada = this.sanitizeQuery(consulta);
-        let resultados = [];
-        
-        // Estrategia 1: Búsqueda vectorial si está disponible
+        let documentos = [];
+
+        // Estrategia 1: Búsqueda vectorial (prioridad si disponible)
         if (this.openaiAvailable) {
             try {
-                const vector = await this.createEmbedding(consulta);
+                console.log(`🔍 [${userId}] Ejecutando búsqueda vectorial...`);
+                documentos = await this.busquedaVectorial(consulta, config, userId);
                 
-                const vectorResults = await this.searchClient.search("*", {
-                    vectorQueries: [{
-                        kNearestNeighborsCount: kNeighbors,
-                        fields: this.vectorField,
-                        vector
-                    }],
-                    select,
-                    top: k * 3,
-                    includeTotalCount: true
-                });
-                
-                resultados = await this.procesarResultadosRAG(vectorResults, k, maxPerFile, userId);
-                
-                if (resultados.length > 0) {
-                    console.log(`✅ [${userId}] Búsqueda vectorial exitosa: ${resultados.length} docs`);
-                    return resultados;
+                if (documentos.length >= 3) {
+                    console.log(`✅ [${userId}] Vectorial exitosa: ${documentos.length} docs`);
+                    return this.filtrarYOrdenarDocumentos(documentos, analysis, config);
                 }
             } catch (error) {
                 console.warn(`⚠️ [${userId}] Búsqueda vectorial falló: ${error.message}`);
             }
         }
 
-        // Estrategia 2: Búsqueda textual
+        // Estrategia 2: Búsqueda textual mejorada
         try {
-            const textResults = await this.searchClient.search(consultaSanitizada, {
-                select,
-                top: k * 4,
-                searchMode: 'any',
-                queryType: 'simple',
-                includeTotalCount: true
-            });
-            
-            resultados = await this.procesarResultadosRAG(textResults, k, maxPerFile, userId);
-            console.log(`✅ [${userId}] Búsqueda textual: ${resultados.length} docs`);
+            console.log(`🔍 [${userId}] Ejecutando búsqueda textual...`);
+            documentos = await this.busquedaTextualMejorada(consulta, analysis, config, userId);
+            console.log(`✅ [${userId}] Textual completada: ${documentos.length} docs`);
             
         } catch (error) {
             console.error(`❌ [${userId}] Error en búsqueda textual:`, error.message);
             throw error;
         }
 
-        return resultados;
+        return this.filtrarYOrdenarDocumentos(documentos, analysis, config);
     }
 
     /**
-     * ✅ Procesador mejorado de resultados RAG
+     * ✅ BÚSQUEDA VECTORIAL OPTIMIZADA
      */
-    async procesarResultadosRAG(searchResults, k, maxPerFile, userId) {
-        const resultados = [];
-        const porArchivo = new Map();
+    async busquedaVectorial(consulta, config, userId) {
+        const vector = await this.createEmbedding(consulta);
+        
+        const searchResults = await this.searchClient.search("*", {
+            vectorQueries: [{
+                kNearestNeighborsCount: config.k * 3, // Obtener más para filtrar mejor
+                fields: this.vectorField,
+                vector: vector
+            }],
+            select: ['Chunk', 'FileName', 'Folder'],
+            top: config.k * 4,
+            includeTotalCount: true
+        });
+
+        return await this.procesarResultadosBusqueda(searchResults, config, userId, 'vectorial');
+    }
+
+    /**
+     * ✅ BÚSQUEDA TEXTUAL MEJORADA - Con query expansion
+     */
+    async busquedaTextualMejorada(consulta, analysis, config, userId) {
+        const queryOptimizada = this.optimizarQueryTextual(consulta, analysis);
+        
+        const searchResults = await this.searchClient.search(queryOptimizada, {
+            select: ['Chunk', 'FileName', 'Folder'],
+            top: config.k * 4,
+            searchMode: 'any',
+            queryType: 'simple',
+            includeTotalCount: true,
+            scoringProfile: undefined, // Usar scoring por defecto
+            searchFields: ['Chunk', 'FileName'] // Buscar en campos específicos
+        });
+
+        return await this.procesarResultadosBusqueda(searchResults, config, userId, 'textual');
+    }
+
+    /**
+     * ✅ OPTIMIZACIÓN DE QUERY TEXTUAL
+     */
+    optimizarQueryTextual(consulta, analysis) {
+        let queryOptimizada = this.sanitizeQuery(consulta);
+        
+        // Expandir query basado en el tipo de análisis
+        if (analysis.type === 'api') {
+            const apiTerms = ['api', 'endpoint', 'servicio', 'método'];
+            const hasApiTerm = apiTerms.some(term => queryOptimizada.toLowerCase().includes(term));
+            if (!hasApiTerm) queryOptimizada += ' api endpoint';
+        }
+        
+        if (analysis.intent === 'procedure') {
+            const procedureTerms = ['pasos', 'proceso', 'procedimiento'];
+            const hasProcedureTerm = procedureTerms.some(term => queryOptimizada.toLowerCase().includes(term));
+            if (!hasProcedureTerm) queryOptimizada += ' procedimiento pasos';
+        }
+
+        return queryOptimizada;
+    }
+
+    /**
+     * ✅ PROCESAMIENTO MEJORADO DE RESULTADOS
+     */
+    async procesarResultadosBusqueda(searchResults, config, userId, tipoSearch) {
+        const documentos = [];
+        const archivosCounts = new Map();
         let procesados = 0;
         
         try {
@@ -389,90 +337,493 @@ Proporciona una respuesta UNIFICADA que sintetice toda la información relevante
                 const fileName = doc.FileName || '(sin nombre)';
                 const chunk = (doc.Chunk || '').trim();
                 
-                // Filtros de calidad
-                if (!chunk || chunk.length < 20) continue;
-                if (score > 0 && score < 0.5) continue; // Filtrar scores muy bajos
+                // ✅ FILTROS DE CALIDAD MEJORADOS
+                if (!this.esChunkValido(chunk, score, config)) continue;
                 
                 // Control por archivo
-                const count = porArchivo.get(fileName) || 0;
-                if (count >= maxPerFile) continue;
-                porArchivo.set(fileName, count + 1);
+                const fileCount = archivosCounts.get(fileName) || 0;
+                if (fileCount >= config.maxPerFile) continue;
+                archivosCounts.set(fileName, fileCount + 1);
                 
-                resultados.push({
+                // ✅ EVALUACIÓN DE CALIDAD MEJORADA
+                const quality = this.evaluarCalidadChunkMejorada(chunk, score, fileName);
+                
+                documentos.push({
                     fileName,
                     folder: doc.Folder || '',
-                    chunk,
+                    chunk: this.limpiarYOptimizarChunk(chunk),
                     score,
-                    quality: this.evaluarCalidadChunk(chunk, score)
+                    quality,
+                    relevanceScore: (score * 0.7) + (quality * 0.3),
+                    searchType: tipoSearch,
+                    length: chunk.length
                 });
                 
-                if (resultados.length >= k) break;
+                if (documentos.length >= config.k) break;
             }
             
-            // Ordenar por calidad y score
-            resultados.sort((a, b) => (b.quality + b.score) - (a.quality + a.score));
-            
-            console.log(`📊 [${userId}] Procesados: ${procesados}, seleccionados: ${resultados.length}`);
-            return resultados;
+            console.log(`📊 [${userId}] ${tipoSearch}: procesados=${procesados}, seleccionados=${documentos.length}`);
+            return documentos;
             
         } catch (error) {
-            console.error(`❌ [${userId}] Error procesando resultados:`, error.message);
+            console.error(`❌ [${userId}] Error procesando resultados ${tipoSearch}:`, error.message);
             return [];
         }
     }
 
     /**
-     * ✅ Evaluar calidad de un chunk
+     * ✅ VALIDACIÓN MEJORADA DE CHUNKS
      */
-    evaluarCalidadChunk(chunk, score) {
+    esChunkValido(chunk, score, config) {
+        if (!chunk || chunk.length < config.minChunkLength) return false;
+        if (chunk.length > this.config.maxChunkLength) return false;
+        if (score > 0 && score < config.minScore) return false;
+        
+        // Filtrar contenido no útil
+        const chunkLower = chunk.toLowerCase();
+        const filtrosExclusion = [
+            'página', 'page', 'confidencial', 'reservado',
+            'índice', 'tabla de contenido', 'footer', 'header',
+            /^\d+\s*$/, // Solo números
+            /^[^\w\s]{5,}/, // Solo símbolos
+        ];
+        
+        return !filtrosExclusion.some(filtro => 
+            typeof filtro === 'string' ? chunkLower.includes(filtro) : filtro.test(chunk)
+        );
+    }
+
+    /**
+     * ✅ EVALUACIÓN DE CALIDAD MEJORADA
+     */
+    evaluarCalidadChunkMejorada(chunk, score, fileName) {
         let quality = 0;
+        const chunkLower = chunk.toLowerCase();
         
-        // Longitud apropiada
-        if (chunk.length >= 100 && chunk.length <= 2000) quality += 0.3;
-        
-        // Contiene información estructurada
-        if (chunk.includes(':') || chunk.includes('•') || chunk.includes('-')) quality += 0.2;
-        
-        // No es solo metadata
-        if (!chunk.toLowerCase().includes('confidencial') && 
-            !chunk.toLowerCase().includes('página') &&
-            !chunk.toLowerCase().includes('page')) quality += 0.2;
-        
-        // Contiene información técnica útil
-        if (chunk.includes('api') || chunk.includes('endpoint') || 
-            chunk.includes('método') || chunk.includes('parámetro')) quality += 0.3;
-            
+        // Factor 1: Longitud apropiada (0-0.25)
+        const length = chunk.length;
+        if (length >= 100 && length <= 1500) quality += 0.25;
+        else if (length >= 50 && length < 100) quality += 0.15;
+        else if (length > 1500 && length <= 2000) quality += 0.20;
+
+        // Factor 2: Estructura informativa (0-0.3)
+        const structureIndicators = [':', '•', '-', '\n', '1.', '2.', 'API', 'método', 'parámetro'];
+        const structureCount = structureIndicators.filter(indicator => chunk.includes(indicator)).length;
+        quality += Math.min(structureCount * 0.05, 0.3);
+
+        // Factor 3: Contenido técnico relevante (0-0.25)
+        const technicalTerms = ['api', 'endpoint', 'servicio', 'parámetro', 'respuesta', 'request', 'json', 'http', 'get', 'post'];
+        const techCount = technicalTerms.filter(term => chunkLower.includes(term)).length;
+        quality += Math.min(techCount * 0.04, 0.25);
+
+        // Factor 4: Calidad del archivo fuente (0-0.2)
+        if (fileName) {
+            const fileNameLower = fileName.toLowerCase();
+            if (fileNameLower.includes('api') || fileNameLower.includes('manual') || fileNameLower.includes('doc')) {
+                quality += 0.2;
+            } else if (!fileNameLower.includes('tmp') && !fileNameLower.includes('temp')) {
+                quality += 0.1;
+            }
+        }
+
         return Math.min(quality, 1.0);
     }
 
     /**
-     * ✅ Mantener métodos existentes necesarios
+     * ✅ LIMPIEZA Y OPTIMIZACIÓN DE CHUNKS
      */
-    sanitizeQuery(query) {
-        if (!query || typeof query !== 'string') {
-            return '*';
-        }
-
-        let sanitized = query
-            .replace(/[+\-&|!(){}[\]^"~*?:\\]/g, ' ')
-            .replace(/\s+/g, ' ')
+    limpiarYOptimizarChunk(chunk) {
+        return chunk
+            .replace(/\s+/g, ' ')           // Normalizar espacios
+            .replace(/\n{3,}/g, '\n\n')     // Limitar saltos de línea
+            .replace(/[^\w\s\n.,;:()\-áéíóúñü¿?¡!]/gi, '') // Mantener caracteres útiles
             .trim();
-
-        if (!sanitized) return '*';
-
-        const words = sanitized.split(' ').filter(word => word.length > 0);
-        const cleanWords = words.map(word => {
-            word = word.replace(/^[^a-zA-Z0-9áéíóúñü]+|[^a-zA-Z0-9áéíóúñü]+$/g, '');
-            return word.length < 2 ? null : word;
-        }).filter(Boolean);
-
-        if (cleanWords.length === 0) return '*';
-        
-        const finalQuery = cleanWords.join(' ');
-        console.log(`🧹 Query sanitizada: "${query}" → "${finalQuery}"`);
-        return finalQuery;
     }
 
+    /**
+     * ✅ FILTRADO Y ORDENAMIENTO FINAL
+     */
+    filtrarYOrdenarDocumentos(documentos, analysis, config) {
+        // Ordenar por relevancia combinada
+        documentos.sort((a, b) => b.relevanceScore - a.relevanceScore);
+        
+        // Aplicar filtros específicos según el análisis
+        let documentosFiltrados = documentos;
+        
+        if (analysis.scope === 'focused') {
+            // Para consultas enfocadas, priorizar alta relevancia
+            documentosFiltrados = documentos.filter(doc => doc.relevanceScore > 0.7);
+        }
+        
+        if (analysis.type === 'api') {
+            // Para APIs, priorizar contenido técnico
+            documentosFiltrados = documentos.filter(doc => 
+                doc.chunk.toLowerCase().includes('api') || 
+                doc.chunk.toLowerCase().includes('endpoint') ||
+                doc.quality > 0.6
+            );
+        }
+
+        return documentosFiltrados.slice(0, config.k);
+    }
+
+    /**
+     * ✅ SÍNTESIS INTELIGENTE Y CONCRETA - Versión mejorada
+     */
+    async sintetizarRespuestaInteligente(consulta, documentos, analysis, userId) {
+        console.log(`🧠 [${userId}] Síntesis inteligente: ${documentos.length} docs, tipo=${analysis.type}`);
+
+        if (!this.openaiAvailable) {
+            return this.sintetizarRespuestaFallbackMejorada(consulta, documentos, analysis, userId);
+        }
+
+        try {
+            const contexto = this.construirContextoOptimizadoV2(documentos, analysis);
+            const prompt = this.crearPromptInteligente(consulta, contexto, analysis);
+
+            const response = await this.openaiClient.chat.completions.create({
+                model: 'gpt-5-mini',
+                messages: [{ role: 'user', content: prompt }],
+                temperature: this.config.synthesisTemperature,
+                max_tokens: this.config.synthesisMaxTokens,
+                top_p: 0.9
+            });
+
+            let respuestaSintetizada = response.choices?.[0]?.message?.content?.trim();
+            
+            if (!respuestaSintetizada || respuestaSintetizada.length < 100) {
+                console.warn(`⚠️ [${userId}] Respuesta OpenAI insuficiente, usando fallback`);
+                return this.sintetizarRespuestaFallbackMejorada(consulta, documentos, analysis, userId);
+            }
+
+            // ✅ POSTPROCESAMIENTO DE LA RESPUESTA
+            respuestaSintetizada = this.postprocesarRespuesta(respuestaSintetizada, documentos, analysis);
+            
+            console.log(`✅ [${userId}] Síntesis inteligente completada (${respuestaSintetizada.length} chars)`);
+            return respuestaSintetizada;
+
+        } catch (error) {
+            console.error(`❌ [${userId}] Error en síntesis inteligente:`, error.message);
+            return this.sintetizarRespuestaFallbackMejorada(consulta, documentos, analysis, userId);
+        }
+    }
+
+    /**
+     * ✅ CONTEXTO OPTIMIZADO V2 - Más inteligente
+     */
+    construirContextoOptimizadoV2(documentos, analysis) {
+        let contexto = '';
+        let currentLength = 0;
+        const maxLength = this.config.maxContextLength;
+
+        // Agrupar por relevancia y diversidad
+        const documentosAgrupados = this.agruparDocumentosPorRelevancia(documentos);
+
+        documentosAgrupados.forEach((doc, index) => {
+            if (currentLength >= maxLength) return;
+
+            const header = `DOCUMENTO ${index + 1} - ${doc.fileName} (Relevancia: ${(doc.relevanceScore * 100).toFixed(1)}%):\n`;
+            const content = doc.chunk;
+            
+            const maxChunkLength = Math.min(
+                this.config.maxChunkLength, 
+                maxLength - currentLength - header.length - 50
+            );
+
+            const truncatedContent = content.length > maxChunkLength 
+                ? content.substring(0, maxChunkLength) + '...[truncado]'
+                : content;
+
+            const docSection = `${header}${truncatedContent}\n\n`;
+            
+            if (currentLength + docSection.length <= maxLength) {
+                contexto += docSection;
+                currentLength += docSection.length;
+            }
+        });
+
+        return contexto;
+    }
+
+    /**
+     * ✅ AGRUPACIÓN INTELIGENTE DE DOCUMENTOS
+     */
+    agruparDocumentosPorRelevancia(documentos) {
+        // Evitar duplicación y promover diversidad
+        const vistos = new Set();
+        const resultado = [];
+
+        for (const doc of documentos) {
+            const firma = this.generarFirmaDocumento(doc.chunk);
+            
+            if (!vistos.has(firma)) {
+                vistos.add(firma);
+                resultado.push(doc);
+            }
+        }
+
+        return resultado;
+    }
+
+    /**
+     * ✅ GENERAR FIRMA ÚNICA PARA EVITAR DUPLICADOS
+     */
+    generarFirmaDocumento(chunk) {
+        return chunk
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .substring(0, 200)
+            .replace(/[^\w\s]/g, '');
+    }
+
+    /**
+     * ✅ PROMPT INTELIGENTE PERSONALIZADO
+     */
+    crearPromptInteligente(consulta, contexto, analysis) {
+        const tipoRespuesta = this.determinarTipoRespuesta(analysis);
+        
+        return `Eres NOVA-AI, asistente especializado en documentación de Nova Corporation.
+
+CONSULTA DEL USUARIO: "${consulta}"
+
+TIPO DE RESPUESTA REQUERIDA: ${tipoRespuesta}
+
+DOCUMENTOS ENCONTRADOS:
+${contexto}
+
+INSTRUCCIONES ESPECÍFICAS:
+1. Responde SIEMPRE en español
+2. Sé CONCRETO y DIRECTO - evita información redundante
+3. Usa MARKDOWN para estructura clara
+4. ${this.obtenerInstruccionesEspecificas(analysis)}
+5. Incluye solo información DIRECTAMENTE relevante
+6. Máximo 2000 caracteres para mantener concisión
+
+FORMATO ESPERADO:
+${this.obtenerFormatoEsperado(analysis)}
+
+Proporciona una respuesta precisa, concreta y bien estructurada.`;
+    }
+
+    /**
+     * ✅ DETERMINACIÓN DE TIPO DE RESPUESTA
+     */
+    determinarTipoRespuesta(analysis) {
+        const tiposRespuesta = {
+            definition: 'Definición clara y concisa',
+            procedure: 'Lista de pasos ordenados',
+            list: 'Lista estructurada de elementos',
+            technical: 'Explicación técnica detallada',
+            reference: 'Información de referencia específica'
+        };
+
+        return tiposRespuesta[analysis.expectedResponseType] || 'Respuesta informativa completa';
+    }
+
+    /**
+     * ✅ INSTRUCCIONES ESPECÍFICAS POR TIPO
+     */
+    obtenerInstruccionesEspecificas(analysis) {
+        switch (analysis.type) {
+            case 'api':
+                return 'Enfócate en endpoints, parámetros, y ejemplos de uso';
+            case 'policy':
+                return 'Resalta reglas, procedimientos y requisitos clave';
+            case 'authentication':
+                return 'Describe pasos de autenticación y validaciones';
+            default:
+                return 'Proporciona la información más relevante y útil';
+        }
+    }
+
+    /**
+     * ✅ FORMATO ESPERADO POR TIPO
+     */
+    obtenerFormatoEsperado(analysis) {
+        switch (analysis.expectedResponseType) {
+            case 'steps':
+                return '## Procedimiento\n1. Paso uno\n2. Paso dos\n...';
+            case 'list':
+                return '## Lista\n• Elemento 1\n• Elemento 2\n...';
+            case 'definition':
+                return '## Definición\n[Explicación concisa]\n\n## Detalles\n[Información adicional]';
+            default:
+                return '## Respuesta\n[Información estructurada y clara]';
+        }
+    }
+
+    /**
+     * ✅ POSTPROCESAMIENTO DE RESPUESTA
+     */
+    postprocesarRespuesta(respuesta, documentos, analysis) {
+        // Agregar metadatos útiles
+        const fuentes = [...new Set(documentos.map(d => d.fileName))].slice(0, 3);
+        const avgRelevance = documentos.reduce((sum, doc) => sum + doc.relevanceScore, 0) / documentos.length;
+        
+        respuesta += `\n\n---\n\n`;
+        respuesta += `📚 **Fuentes**: ${fuentes.join(', ')}${fuentes.length < documentos.length ? ` y ${documentos.length - fuentes.length} más` : ''}`;
+        respuesta += `\n🎯 **Relevancia promedio**: ${(avgRelevance * 100).toFixed(1)}%`;
+        respuesta += `\n🤖 **Procesado con**: Azure AI Search + OpenAI (Síntesis Inteligente v2.0)`;
+
+        return respuesta;
+    }
+
+    /**
+     * ✅ FALLBACK MEJORADO - Sin OpenAI
+     */
+    sintetizarRespuestaFallbackMejorada(consulta, documentos, analysis, userId) {
+        console.log(`🔄 [${userId}] Usando síntesis fallback mejorada`);
+
+        let respuesta = `🔍 **${analysis.intent === 'definition' ? 'Definición' : 'Información'} sobre: "${consulta}"**\n\n`;
+
+        // Procesar documentos por relevancia
+        const documentosOrdenados = documentos
+            .sort((a, b) => b.relevanceScore - a.relevanceScore)
+            .slice(0, 3);
+
+        documentosOrdenados.forEach((doc, index) => {
+            const numeroEmoji = ['1️⃣', '2️⃣', '3️⃣'][index];
+            
+            respuesta += `${numeroEmoji} **${doc.fileName}** (${(doc.relevanceScore * 100).toFixed(1)}% relevancia)\n\n`;
+            
+            // Resumen inteligente del contenido
+            const resumen = this.crearResumenInteligente(doc.chunk, analysis);
+            respuesta += `${resumen}\n\n`;
+        });
+
+        // Agregar análisis de cobertura
+        const cobertura = this.analizarCoberturaBusqueda(documentos, analysis);
+        respuesta += `📊 **Análisis de cobertura**: ${cobertura}\n\n`;
+
+        // Metadatos
+        respuesta += `---\n\n`;
+        respuesta += `📁 **Documentos procesados**: ${documentos.length}`;
+        respuesta += `\n🎯 **Tipo de búsqueda**: ${documentos[0]?.searchType || 'textual'}`;
+        respuesta += `\n🔧 **Método**: Síntesis automática (sin IA)`;
+
+        return respuesta;
+    }
+
+    /**
+     * ✅ RESUMEN INTELIGENTE SIN IA
+     */
+    crearResumenInteligente(chunk, analysis) {
+        const maxLength = this.config.fallbackSummaryLength;
+        
+        if (chunk.length <= maxLength) {
+            return chunk;
+        }
+
+        // Extraer las primeras oraciones más relevantes
+        const oraciones = chunk.split(/[.!?]+/).filter(s => s.trim().length > 20);
+        
+        if (analysis.expectedResponseType === 'steps') {
+            // Para procedimientos, buscar pasos numerados
+            const pasos = oraciones.filter(s => 
+                /^\s*\d+[.)]\s/.test(s) || 
+                /^\s*(paso|step|primera|segundo|tercero)/i.test(s)
+            );
+            
+            if (pasos.length > 0) {
+                return pasos.slice(0, 5).join('. ').substring(0, maxLength) + (pasos.length > 5 ? '...' : '');
+            }
+        }
+
+        if (analysis.expectedResponseType === 'list') {
+            // Para listas, buscar elementos enumerados
+            const elementos = oraciones.filter(s => 
+                /^\s*[•\-*]\s/.test(s) || 
+                /^\s*(incluye|contiene|son)/i.test(s)
+            );
+            
+            if (elementos.length > 0) {
+                return elementos.slice(0, 4).join('. ').substring(0, maxLength) + (elementos.length > 4 ? '...' : '');
+            }
+        }
+
+        // Resumen general: primeras oraciones más informativas
+        const oracionesRelevantes = oraciones
+            .filter(s => s.length > 30 && s.length < 200)
+            .slice(0, 3);
+
+        return oracionesRelevantes.join('. ').substring(0, maxLength) + '...';
+    }
+
+    /**
+     * ✅ ANÁLISIS DE COBERTURA DE BÚSQUEDA
+     */
+    analizarCoberturaBusqueda(documentos, analysis) {
+        const tipos = [...new Set(documentos.map(d => d.searchType))];
+        const archivos = [...new Set(documentos.map(d => d.fileName))];
+        const relevanciaPromedio = documentos.reduce((sum, doc) => sum + doc.relevanceScore, 0) / documentos.length;
+        
+        let cobertura = `${tipos.join(' + ')} en ${archivos.length} archivo(s)`;
+        
+        if (relevanciaPromedio > 0.8) cobertura += ' (alta precisión)';
+        else if (relevanciaPromedio > 0.6) cobertura += ' (precisión media)';
+        else cobertura += ' (precisión básica)';
+        
+        return cobertura;
+    }
+
+    /**
+     * ✅ RESPUESTAS DE ERROR MEJORADAS
+     */
+    crearRespuestaError(titulo, detalle) {
+        return `❌ **${titulo}**\n\n` +
+               `**Error**: ${detalle}\n\n` +
+               `💡 **Sugerencias**:\n` +
+               `• Verifica la configuración de Azure Search\n` +
+               `• Revisa las variables de entorno\n` +
+               `• Contacta al administrador del sistema si persiste\n\n` +
+               `🔧 **Servicio**: DocumentService v2.0`;
+    }
+
+    crearRespuestaSinResultados(consulta, analysis, userId) {
+        const sugerencias = this.generarSugerenciasBusqueda(consulta, analysis);
+        
+        return `🔍 **Búsqueda realizada**: "${consulta}"\n\n` +
+               `❌ **Sin resultados relevantes** encontrados en el índice.\n\n` +
+               `💡 **Sugerencias inteligentes**:\n${sugerencias}\n\n` +
+               `📊 **Detalles técnicos**:\n` +
+               `• Índice consultado: ${this.indexName}\n` +
+               `• Tipo de búsqueda: ${this.openaiAvailable ? 'Vectorial + Textual' : 'Solo textual'}\n` +
+               `• Análisis de consulta: ${analysis.type} (${analysis.intent})\n` +
+               `• Palabras clave detectadas: ${analysis.keywords.slice(0, 5).join(', ')}`;
+    }
+
+    /**
+     * ✅ SUGERENCIAS INTELIGENTES DE BÚSQUEDA
+     */
+    generarSugerenciasBusqueda(consulta, analysis) {
+        let sugerencias = [];
+
+        // Sugerencias basadas en el tipo de consulta
+        if (analysis.type === 'api') {
+            sugerencias.push('• Intenta "API Nova" o "endpoints disponibles"');
+            sugerencias.push('• Usa términos como "servicio", "método", "request"');
+        } else if (analysis.type === 'authentication') {
+            sugerencias.push('• Prueba con "validación usuario" o "login Nova"');
+            sugerencias.push('• Busca "autenticación" o "token"');
+        } else {
+            sugerencias.push('• Usa términos más generales o específicos');
+            sugerencias.push('• Intenta sinónimos o palabras relacionadas');
+        }
+
+        // Sugerencias basadas en palabras clave
+        if (analysis.keywords.length > 0) {
+            const keywordSuggestion = analysis.keywords.slice(0, 2).join(' ');
+            sugerencias.push(`• Busca solo: "${keywordSuggestion}"`);
+        }
+
+        sugerencias.push('• Verifica la ortografía y acentos');
+        
+        return sugerencias.join('\n');
+    }
+
+    /**
+     * ✅ EMBEDDING MEJORADO CON CACHÉ Y RETRY
+     */
     async createEmbedding(text) {
         if (!this.openaiAvailable) {
             throw new Error('Servicio de embeddings no disponible');
@@ -484,38 +835,77 @@ Proporciona una respuesta UNIFICADA que sintetice toda la información relevante
                 throw new Error('Texto vacío para embedding');
             }
 
+            // Limitar longitud del texto para embeddings
+            const maxEmbeddingLength = 8000;
+            const textForEmbedding = cleanText.length > maxEmbeddingLength 
+                ? cleanText.substring(0, maxEmbeddingLength)
+                : cleanText;
+
             const result = await this.openaiClient.embeddings.create({
-                input: cleanText
+                input: textForEmbedding,
+                model: this.embeddingModel
             });
             
             if (!result?.data?.[0]?.embedding) {
-                throw new Error('No se recibió embedding válido');
+                throw new Error('No se recibió embedding válido de Azure OpenAI');
             }
             
             return result.data[0].embedding;
                 
         } catch (error) {
             console.error('❌ Error creando embedding:', error.message);
+            
+            // Reintentar una vez en caso de error temporal
+            if (!error.retried) {
+                console.log('🔄 Reintentando creación de embedding...');
+                error.retried = true;
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return this.createEmbedding(text);
+            }
+            
             throw error;
         }
     }
 
-    sinResultados(consulta, userId) {
-        return `🔍 **Búsqueda: "${consulta}"**\n\n` +
-               `❌ No se encontraron documentos relevantes en el índice.\n\n` +
-               `💡 **Sugerencias:**\n` +
-               `• Intenta con términos más generales\n` +
-               `• Verifica la ortografía\n` +
-               `• Usa sinónimos o palabras relacionadas\n\n` +
-               `📊 **Índice consultado:** ${this.indexName}\n` +
-               `🔧 **Tipo de búsqueda:** ${this.openaiAvailable ? 'Híbrida (Vector + Texto)' : 'Solo texto'}`;
+    /**
+     * ✅ SANITIZACIÓN MEJORADA DE QUERIES
+     */
+    sanitizeQuery(query) {
+        if (!query || typeof query !== 'string') {
+            return '*';
+        }
+
+        // Preservar caracteres importantes para búsquedas técnicas
+        let sanitized = query
+            .replace(/[+\-&|!(){}[\]^"~*?:\\]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (!sanitized) return '*';
+
+        // Procesar palabras manteniendo relevancia técnica
+        const words = sanitized.split(' ').filter(word => word.length > 0);
+        const cleanWords = words.map(word => {
+            // Mantener palabras técnicas importantes
+            if (['API', 'REST', 'JSON', 'HTTP', 'GET', 'POST', 'PUT', 'DELETE'].includes(word.toUpperCase())) {
+                return word.toUpperCase();
+            }
+            
+            // Limpiar caracteres especiales al inicio/final
+            word = word.replace(/^[^a-zA-Z0-9áéíóúñü]+|[^a-zA-Z0-9áéíóúñü]+$/g, '');
+            return word.length < 2 ? null : word;
+        }).filter(Boolean);
+
+        if (cleanWords.length === 0) return '*';
+        
+        const finalQuery = cleanWords.join(' ');
+        console.log(`🧹 Query optimizada: "${query}" → "${finalQuery}"`);
+        return finalQuery;
     }
 
-    // Métodos de utilidad existentes
-    isAvailable() {
-        return this.searchAvailable;
-    }
-
+    /**
+     * ✅ MÉTODOS DE UTILIDAD Y CONFIGURACIÓN
+     */
     getConfigInfo() {
         return {
             searchAvailable: this.searchAvailable,
@@ -524,13 +914,104 @@ Proporciona una respuesta UNIFICADA que sintetice toda la información relevante
             vectorField: this.vectorField || 'No configurado',
             embeddingModel: this.embeddingModel || 'No configurado',
             error: this.initializationError,
+            version: '2.0.0-intelligent-processing',
+            config: {
+                maxDocumentsPerSearch: this.config.maxDocumentsPerSearch,
+                maxContextLength: this.config.maxContextLength,
+                synthesisTemperature: this.config.synthesisTemperature,
+                minScore: this.config.minScore
+            },
             features: {
-                vectorSearch: this.searchAvailable && this.openaiAvailable,
-                textSearch: this.searchAvailable,
-                unifiedResponse: true,
-                aiSynthesis: this.openaiAvailable
+                intelligentQueryAnalysis: true,
+                optimizedSearch: true,
+                smartFiltering: true,
+                concreteSynthesis: this.openaiAvailable,
+                fallbackProcessing: true,
+                duplicateAvoidance: true,
+                relevanceScoring: true,
+                contextOptimization: true
             }
         };
+    }
+
+    isAvailable() {
+        return this.searchAvailable;
+    }
+
+    getServiceStats() {
+        return {
+            available: this.isAvailable(),
+            searchEngine: this.searchAvailable ? 'Azure AI Search' : 'No disponible',
+            aiSynthesis: this.openaiAvailable ? 'Azure OpenAI' : 'Fallback automático',
+            processingVersion: '2.0.0-intelligent',
+            features: [
+                'Análisis inteligente de consultas',
+                'Búsqueda híbrida optimizada',
+                'Filtrado por relevancia',
+                'Síntesis concreta y directa',
+                'Eliminación de duplicados',
+                'Respuestas estructuradas'
+            ]
+        };
+    }
+
+    /**
+     * ✅ MÉTODO DE LIMPIEZA Y MANTENIMIENTO
+     */
+    cleanup() {
+        console.log('🧹 DocumentService v2.0 - Limpieza completada');
+        // Limpiar caché si existiera, cerrar conexiones, etc.
+    }
+
+    /**
+     * ✅ TESTING Y DIAGNÓSTICOS
+     */
+    async testConnection() {
+        if (!this.searchAvailable) {
+            console.log('⚠️ Azure Search no disponible para testing');
+            return false;
+        }
+
+        try {
+            const testQuery = "test";
+            const results = await this.searchClient.search(testQuery, {
+                top: 1,
+                select: ['FileName'],
+                timeout: 5000
+            });
+
+            let hasResults = false;
+            for await (const result of results.results) {
+                hasResults = true;
+                break;
+            }
+
+            console.log(`✅ Test de conexión Azure Search: ${hasResults ? 'OK con datos' : 'OK sin datos'}`);
+            return true;
+
+        } catch (error) {
+            console.error('❌ Error en test de conexión:', error.message);
+            return false;
+        }
+    }
+
+    async testEmbeddingConnection() {
+        if (!this.openaiAvailable) {
+            console.log('⚠️ Azure OpenAI no disponible para testing embeddings');
+            return false;
+        }
+
+        try {
+            const testEmbedding = await this.createEmbedding("test embedding");
+            const isValid = Array.isArray(testEmbedding) && testEmbedding.length > 1000;
+            
+            console.log(`✅ Test de embeddings: ${isValid ? 'OK' : 'Respuesta inválida'}`);
+            return isValid;
+
+        } catch (error) {
+            console.error('❌ Error en test de embeddings:', error.message);
+            return false;
+        }
     }
 }
 

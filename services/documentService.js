@@ -18,17 +18,20 @@ class DocumentService {
         this.openaiClient = null;
 
         // ✅ NUEVO: Configuración optimizada
-        this.config = {
-            maxContextLength: 12000,        // Contexto máximo para OpenAI
-            maxChunkLength: 2000,           // Longitud máxima por chunk
-            minChunkLength: 50,             // Longitud mínima válida
-            minScore: 0.6,                  // Score mínimo para considerar relevante
-            maxDocumentsPerSearch: 8,       // Máximo documentos por búsqueda
-            maxDocumentsPerFile: 2,         // Máximo chunks por archivo
-            synthesisTemperature: 0.2,      // Temperatura para síntesis (más preciso)
-            synthesisMaxTokens: 2500,       // Tokens máximos para síntesis
-            fallbackSummaryLength: 1200     // Longitud para resúmenes fallback
-        };
+        // En el constructor (ajusta la config):
+this.config = {
+  maxContextLength: 12000,
+  maxChunkLength: 2000,
+  minChunkLength: 20,          // ⬅️ antes 50
+  minScoreVector: 0.35,        // ⬅️ nuevo: umbral SOLO para vectorial
+  minScoreText: 0.0,           // ⬅️ nuevo: NO filtrar por score en textual
+  maxDocumentsPerSearch: 8,
+  maxDocumentsPerFile: 2,
+  synthesisTemperature: 0.2,
+  synthesisMaxTokens: 2500,
+  fallbackSummaryLength: 1200
+};
+
 
         console.log('🔍 Inicializando Document Service Mejorado...');
         this.initializeAzureSearch();
@@ -283,115 +286,120 @@ class DocumentService {
      * ✅ BÚSQUEDA TEXTUAL MEJORADA - Con query expansion
      */
     async busquedaTextualMejorada(consulta, analysis, config, userId) {
-        const queryOptimizada = this.optimizarQueryTextual(consulta, analysis);
-        
-        const searchResults = await this.searchClient.search(queryOptimizada, {
-            select: ['Chunk', 'FileName', 'Folder'],
-            top: config.k * 4,
-            searchMode: 'any',
-            queryType: 'simple',
-            includeTotalCount: true,
-            scoringProfile: undefined, // Usar scoring por defecto
-            searchFields: ['Chunk', 'FileName'] // Buscar en campos específicos
-        });
+  const queryOptimizada = this.optimizarQueryTextual(consulta, analysis);
 
-        return await this.procesarResultadosBusqueda(searchResults, config, userId, 'textual');
-    }
+  const searchResults = await this.searchClient.search(queryOptimizada, {
+    select: ['Chunk', 'FileName', 'Folder', 'Estado'],  // ⬅️ añade Estado si puede ayudar
+    top: config.k * 4,
+    searchMode: 'all',       // ⬅️ antes any
+    queryType: 'full',       // ⬅️ antes simple
+    searchFields: ['Chunk', 'FileName', 'Folder'] // ⬅️ amplía campos
+    // Si tu servicio lo soporta, podrías probar:
+    // queryLanguage: 'es-es',
+    // speller: 'lexicon'
+  });
+
+  return await this.procesarResultadosBusqueda(searchResults, config, userId, 'textual');
+}
+
 
     /**
      * ✅ OPTIMIZACIÓN DE QUERY TEXTUAL
      */
     optimizarQueryTextual(consulta, analysis) {
-        let queryOptimizada = this.sanitizeQuery(consulta);
-        
-        // Expandir query basado en el tipo de análisis
-        if (analysis.type === 'api') {
-            const apiTerms = ['api', 'endpoint', 'servicio', 'método'];
-            const hasApiTerm = apiTerms.some(term => queryOptimizada.toLowerCase().includes(term));
-            if (!hasApiTerm) queryOptimizada += ' api endpoint';
-        }
-        
-        if (analysis.intent === 'procedure') {
-            const procedureTerms = ['pasos', 'proceso', 'procedimiento'];
-            const hasProcedureTerm = procedureTerms.some(term => queryOptimizada.toLowerCase().includes(term));
-            if (!hasProcedureTerm) queryOptimizada += ' procedimiento pasos';
-        }
+  let q = this.sanitizeQuery(consulta);
 
-        return queryOptimizada;
+  // refuerza términos si parecen políticas/procedimientos
+  if (/(pol[ií]tica|procedimiento|regla|norma)/i.test(q) === false) {
+    if (analysis.type === 'policy' || /prestamo|pr[eé]stamo/i.test(q)) {
+      q += ' politica procedimiento reglas';
     }
+  }
+
+  // elimina underscores que no suman en textual
+  q = q.replace(/_/g, ' ');
+
+  return q.trim();
+}
+
 
     /**
      * ✅ PROCESAMIENTO MEJORADO DE RESULTADOS
      */
-    async procesarResultadosBusqueda(searchResults, config, userId, tipoSearch) {
-        const documentos = [];
-        const archivosCounts = new Map();
-        let procesados = 0;
-        
-        try {
-            for await (const result of searchResults.results) {
-                procesados++;
-                
-                const doc = result.document || {};
-                const score = result.score || 0;
-                const fileName = doc.FileName || '(sin nombre)';
-                const chunk = (doc.Chunk || '').trim();
-                
-                // ✅ FILTROS DE CALIDAD MEJORADOS
-                if (!this.esChunkValido(chunk, score, config)) continue;
-                
-                // Control por archivo
-                const fileCount = archivosCounts.get(fileName) || 0;
-                if (fileCount >= config.maxPerFile) continue;
-                archivosCounts.set(fileName, fileCount + 1);
-                
-                // ✅ EVALUACIÓN DE CALIDAD MEJORADA
-                const quality = this.evaluarCalidadChunkMejorada(chunk, score, fileName);
-                
-                documentos.push({
-                    fileName,
-                    folder: doc.Folder || '',
-                    chunk: this.limpiarYOptimizarChunk(chunk),
-                    score,
-                    quality,
-                    relevanceScore: (score * 0.7) + (quality * 0.3),
-                    searchType: tipoSearch,
-                    length: chunk.length
-                });
-                
-                if (documentos.length >= config.k) break;
-            }
-            
-            console.log(`📊 [${userId}] ${tipoSearch}: procesados=${procesados}, seleccionados=${documentos.length}`);
-            return documentos;
-            
-        } catch (error) {
-            console.error(`❌ [${userId}] Error procesando resultados ${tipoSearch}:`, error.message);
-            return [];
-        }
+    // Cambia la firma de procesarResultadosBusqueda para recibir el tipo:
+async procesarResultadosBusqueda(searchResults, config, userId, tipoSearch) {
+  const documentos = [];
+  const archivosCounts = new Map();
+  let procesados = 0;
+
+  const minScore = tipoSearch === 'vectorial' ? (config.minScoreVector ?? 0.35) : (config.minScoreText ?? 0.0);
+
+  try {
+    for await (const result of searchResults.results) {
+      procesados++;
+
+      const doc = result.document || {};
+      const score = Number(result.score || 0);
+      const fileName = doc.FileName || '(sin nombre)';
+      const rawChunk = (doc.Chunk || '').trim();
+
+      // ✅ Filtro de chunk y score más flexible
+      if (!this.esChunkValido(rawChunk, score, { ...config, minScore: minScore }, tipoSearch)) continue;
+
+      const fileCount = archivosCounts.get(fileName) || 0;
+      if (fileCount >= config.maxPerFile) continue;
+      archivosCounts.set(fileName, fileCount + 1);
+
+      const cleanChunk = this.limpiarYOptimizarChunk(rawChunk);
+      const quality = this.evaluarCalidadChunkMejorada(cleanChunk, score, fileName);
+
+      documentos.push({
+        fileName,
+        folder: doc.Folder || '',
+        chunk: cleanChunk,
+        score,
+        quality,
+        relevanceScore: (score * 0.7) + (quality * 0.3),
+        searchType: tipoSearch,
+        length: cleanChunk.length
+      });
+
+      if (documentos.length >= config.k) break;
     }
+
+    console.log(`📊 [${userId}] ${tipoSearch}: procesados=${procesados}, seleccionados=${documentos.length}`);
+    return documentos;
+
+  } catch (error) {
+    console.error(`❌ [${userId}] Error procesando resultados ${tipoSearch}:`, error.message);
+    return [];
+  }
+}
+
 
     /**
      * ✅ VALIDACIÓN MEJORADA DE CHUNKS
      */
-    esChunkValido(chunk, score, config) {
-        if (!chunk || chunk.length < config.minChunkLength) return false;
-        if (chunk.length > this.config.maxChunkLength) return false;
-        if (score > 0 && score < config.minScore) return false;
-        
-        // Filtrar contenido no útil
-        const chunkLower = chunk.toLowerCase();
-        const filtrosExclusion = [
-            'página', 'page', 'confidencial', 'reservado',
-            'índice', 'tabla de contenido', 'footer', 'header',
-            /^\d+\s*$/, // Solo números
-            /^[^\w\s]{5,}/, // Solo símbolos
-        ];
-        
-        return !filtrosExclusion.some(filtro => 
-            typeof filtro === 'string' ? chunkLower.includes(filtro) : filtro.test(chunk)
-        );
-    }
+    // Ajusta esChunkValido para considerar el tipo:
+esChunkValido(chunk, score, config, tipoSearch) {
+  if (!chunk) return false;
+  if (chunk.length < (config.minChunkLength ?? 20)) return false;
+  if (chunk.length > (this.config.maxChunkLength ?? 2000)) return false;
+
+  // Solo aplica score mínimo en vectorial
+  if (tipoSearch === 'vectorial' && score > 0 && score < (config.minScore ?? 0.35)) return false;
+
+  const chunkLower = chunk.toLowerCase();
+  const filtrosExclusion = [
+    'índice',
+    'tabla de contenido',
+    'footer',
+    'header',
+    /^\d+\s*$/,
+    /^[^\w\s]{5,}/,
+  ];
+  return !filtrosExclusion.some(f => typeof f === 'string' ? chunkLower.includes(f) : f.test(chunk));
+}
 
     /**
      * ✅ EVALUACIÓN DE CALIDAD MEJORADA

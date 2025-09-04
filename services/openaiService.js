@@ -17,9 +17,9 @@ class AzureOpenAIService {
     this.config = {
       maxConversationTokens: 4000,      // Tokens máximos para conversación
       maxResponseTokens: 3000,          // Tokens máximos para respuesta
-      defaultTemperature: 0.7,          // Temperatura por defecto
-      technicalTemperature: 0.3,        // Para consultas técnicas
-      creativeTemperature: 0.9,         // Para tareas creativas
+      defaultTemperature: 1.0,          // Temperatura por defecto
+      technicalTemperature:1.0,        // Para consultas técnicas
+      creativeTemperature: 1.0,          // Para tareas creativas
       ragIntegrationTimeout: 15000,     // Timeout para integración RAG
       retryAttempts: 3,                 // Intentos de retry
       ragPriorityKeywords: [            // Keywords que activan RAG con prioridad

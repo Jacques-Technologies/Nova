@@ -507,10 +507,7 @@ Proporciona la mejor respuesta posible basada en tu conocimiento general sobre N
       model: this.deploymentName,
       messages: mensajesParaIA,
       temperature: analysis.aiConfig.temperature,
-      max_completion_tokens: analysis.aiConfig.maxTokens,
-      top_p: 0.9,
-      frequency_penalty: 0.1,
-      presence_penalty: 0.1
+      max_completion_tokens: analysis.aiConfig.maxTokens
     };
 
     try {

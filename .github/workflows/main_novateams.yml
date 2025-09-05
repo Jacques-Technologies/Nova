@@ -52,4 +52,4 @@ jobs:
           app-name: 'novateams'
           slot-name: 'Production'
           package: .
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_915E2323BE7041F39DB74258396CC3CD }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_05F53A04878B404490F35997430A777B }}

@@ -271,35 +271,38 @@ class DocumentService {
      * CONSTRUCCIÓN DE CONTEXTO OPTIMIZADA PARA COMPLETION
      */
     construirContextoParaCompletion(documentos, consulta) {
-        let contexto = `CONSULTA DEL USUARIO: "${consulta}"\n\n`;
-        contexto += `DOCUMENTOS RELEVANTES ENCONTRADOS:\n\n`;
-        
-        let currentLength = contexto.length;
-        const maxLength = this.config.maxContextLength;
+    let contexto = `CONSULTA DEL USUARIO: "${consulta}"\n\n`;
+    contexto += `DOCUMENTOS RELEVANTES ENCONTRADOS:\n\n`;
 
-        documentos.forEach((doc, index) => {
-            if (currentLength >= maxLength) return;
+    let currentLength = contexto.length;
+    const maxLength = this.config.maxContextLength;
 
-            const header = `--- DOCUMENTO ${index + 1}: ${doc.fileName} (Relevancia: ${(doc.relevanceScore * 100).toFixed(1)}%) ---\n`;
-            const content = `${doc.chunk}\n\n`;
-            
-            const seccionCompleta = header + content;
-            
-            if (currentLength + seccionCompleta.length <= maxLength) {
-                contexto += seccionCompleta;
-                currentLength += seccionCompleta.length;
-            } else {
-                // Truncar si es necesario
-                const espacioRestante = maxLength - currentLength - header.length - 50;
-                if (espacioRestante > 100) {
-                    contexto += header + doc.chunk.substring(0, espacioRestante) + '...[truncado]\n\n';
-                }
-                break;
+    // ✅ Usamos for...of para poder "break"
+    let idx = 0;
+    for (const doc of documentos) {
+        if (currentLength >= maxLength) break;
+
+        const header = `--- DOCUMENTO ${idx + 1}: ${doc.fileName} (Relevancia: ${(doc.relevanceScore * 100).toFixed(1)}%) ---\n`;
+        const content = `${doc.chunk}\n\n`;
+        const seccionCompleta = header + content;
+
+        if (currentLength + seccionCompleta.length <= maxLength) {
+            contexto += seccionCompleta;
+            currentLength += seccionCompleta.length;
+        } else {
+            // Truncar si es necesario
+            const espacioRestante = maxLength - currentLength - header.length - 50; // margen mínimo
+            if (espacioRestante > 100) {
+                contexto += header + doc.chunk.substring(0, espacioRestante) + '...[truncado]\n\n';
             }
-        });
-
-        return contexto;
+            break; // ✅ ahora sí es legal
+        }
+        idx++;
     }
+
+    return contexto;
+}
+
 
     /**
      * GENERACIÓN DE RESPUESTA CON COMPLETION - NUEVO MÉTODO

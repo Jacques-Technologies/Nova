@@ -576,6 +576,79 @@ analizarTendencias(tasasData) {
   return tendencias;
 }
 
+// Función auxiliar para calcular estadísticas
+calcularEstadisticasTasas(tasasData) {
+  const tipos = ['vista', 'fijo1', 'fijo3', 'fijo6', 'FAP', 'Nov', 'Prestamos'];
+  const estadisticas = {};
+  
+  tipos.forEach(tipo => {
+    const valores = tasasData
+      .map(item => parseFloat(item[tipo]))
+      .filter(val => !isNaN(val) && val > 0);
+    
+    if (valores.length > 0) {
+      const tipoNombre = {
+        'vista': 'Vista',
+        'fijo1': 'Fijo 1M',
+        'fijo3': 'Fijo 3M', 
+        'fijo6': 'Fijo 6M',
+        'FAP': 'FAP',
+        'Nov': 'Nov',
+        'Prestamos': 'Préstamos'
+      }[tipo] || tipo;
+
+      estadisticas[tipoNombre] = {
+        promedio: valores.reduce((a, b) => a + b, 0) / valores.length,
+        minimo: Math.min(...valores),
+        maximo: Math.max(...valores)
+      };
+    }
+  });
+  
+  return estadisticas;
+}
+
+// Función auxiliar para analizar tendencias
+analizarTendencias(tasasData) {
+  const tendencias = [];
+  
+  if (tasasData.length < 2) return tendencias;
+  
+  // Analizar tendencia de tasas más importantes
+  const tiposImportantes = ['fijo1', 'fijo3', 'fijo6', 'Prestamos'];
+  
+  tiposImportantes.forEach(tipo => {
+    const valores = tasasData
+      .filter(item => item[tipo] && !isNaN(parseFloat(item[tipo])))
+      .map(item => parseFloat(item[tipo]));
+    
+    if (valores.length >= 2) {
+      const inicial = valores[0];
+      const final = valores[valores.length - 1];
+      const diferencia = final - inicial;
+      
+      const tipoNombre = {
+        'fijo1': 'Fijo 1M',
+        'fijo3': 'Fijo 3M',
+        'fijo6': 'Fijo 6M', 
+        'Prestamos': 'Préstamos'
+      }[tipo];
+      
+      if (Math.abs(diferencia) >= 0.1) {
+        const direccion = diferencia > 0 ? 'incrementó' : 'disminuyó';
+        const descripcion = `${direccion} ${Math.abs(diferencia).toFixed(2)} puntos porcentuales (de ${inicial}% a ${final}%)`;
+        
+        tendencias.push({
+          tipo: tipoNombre,
+          descripcion: descripcion
+        });
+      }
+    }
+  });
+  
+  return tendencias;
+}
+
   async consultarSaldoUsuario(userToken, userInfo) {
     try {
       if (!userToken || !userInfo) {

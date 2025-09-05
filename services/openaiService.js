@@ -20,7 +20,7 @@ class AzureOpenAIService {
     try {
       const apiKey = process.env.OPENAI_API_KEY;
       const endpoint = process.env.OPENAI_ENDPOINT;
-      const deploymentName = process.env.OPENAI_DEPLOYMENT || 'gpt-4o-mini';
+      const deploymentName = process.env.OPENAI_DEPLOYMENT || 'gpt-5-mini';
       const apiVersion = process.env.OPENAI_API_VERSION || '2024-12-01-preview';
 
       if (!apiKey || !endpoint) {

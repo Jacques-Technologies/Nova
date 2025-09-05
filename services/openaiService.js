@@ -70,7 +70,7 @@ class AzureOpenAIService {
       const requestConfig = {
         model: this.deploymentName,
         messages: messages,
-        temperature: 0.7,
+        temperature: 1.0,
         max_completion_tokens: 3000,
         tools: this.tools,
         tool_choice: 'auto'

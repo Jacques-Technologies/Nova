@@ -4,7 +4,7 @@
   "description": "Bot de Teams",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
+    "start": "node src/index.js",
     "dev": "nodemon index.js",
     "test": "jest",
     "lint": "eslint .",

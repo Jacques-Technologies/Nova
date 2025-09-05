@@ -610,88 +610,93 @@ class CosmosService {
     /**
      * ✅ COMPLETAMENTE CORREGIDO: updateConversationActivity SIN errores de concurrencia
      */
-    async updateConversationActivity(conversationId, userId) {
-        try {
-            if (!this.cosmosAvailable) {
-                console.log(`ℹ️ [${userId}] Cosmos DB no disponible - saltando actualización de actividad`);
-                return false;
-            }
-
-            // ✅ VALIDACIÓN: Parámetros requeridos
-            if (!conversationId || !userId) {
-                console.error('❌ updateConversationActivity: conversationId o userId faltante');
-                return false;
-            }
-
-            const conversationDocId = `conversation_${conversationId}`;
-            const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
-
-            console.log(`🔄 [${userId}] Actualizando actividad de conversación: ${conversationDocId}`);
-
-            // ✅ SOLUCIÓN DEFINITIVA: SIEMPRE usar UPSERT
-            try {
-                // Intentar leer el documento existente para preservar datos
-                let existingDoc = null;
-                try {
-                    const { resource } = await this.container
-                        .item(conversationDocId, userId)
-                        .read();
-                    existingDoc = resource;
-                } catch (readError) {
-                    if (readError.code !== 404) {
-                        console.warn(`⚠️ [${userId}] Error leyendo documento existente (continuando):`, readError.message);
-                    }
-                }
-
-                // ✅ CREAR DOCUMENTO ACTUALIZADO: Preservar datos existentes si los hay
-                const updatedDoc = {
-                    id: conversationDocId,
-                    conversationId: conversationId,
-                    userId: userId,
-                    userName: existingDoc?.userName || 'Usuario',
-                    documentType: 'conversation_info',
-                    createdAt: existingDoc?.createdAt || timestamp,
-                    lastActivity: timestamp, // ✅ SIEMPRE actualizar
-                    messageCount: (existingDoc?.messageCount || 0) + 1, // ✅ Incrementar contador
-                    isActive: true,
-                    partitionKey: userId,
-                    ttl: 60 * 60 * 24 * 90,
-                    version: '2.1.3',
-                    // Preservar otros campos si existen
-                    ...(existingDoc || {}),
-                    // Sobrescribir campos críticos
-                    lastActivity: timestamp,
-                    messageCount: (existingDoc?.messageCount || 0) + 1,
-                    isActive: true
-                };
-
-                // ✅ UPSERT: Funciona SIEMPRE, sin importar si existe o no
-                const { resource: finalDoc } = await this.container.items.upsert(updatedDoc);
-                
-                if (!finalDoc) {
-                    console.error(`❌ [${userId}] Upsert retornó documento null`);
-                    return false;
-                }
-
-                console.log(`✅ [${userId}] Actividad de conversación actualizada exitosamente`);
-                console.log(`📊 [${userId}] Mensajes totales: ${finalDoc.messageCount}, Última actividad: ${finalDoc.lastActivity}`);
-                
-                return true;
-
-            } catch (upsertError) {
-                console.error(`❌ [${userId}] Error en upsert:`, upsertError.message);
-                return false;
-            }
-
-        } catch (error) {
-            console.error(`❌ [${userId}] Error general en updateConversationActivity:`, {
-                error: error.message,
-                conversationId: conversationId,
-                userId: userId
-            });
+    /**
+ * ✅ FIXED: updateConversationActivity without duplicate keys
+ */
+async updateConversationActivity(conversationId, userId) {
+    try {
+        if (!this.cosmosAvailable) {
+            console.log(`ℹ️ [${userId}] Cosmos DB no disponible - saltando actualización de actividad`);
             return false;
         }
+
+        // ✅ VALIDACIÓN: Parámetros requeridos
+        if (!conversationId || !userId) {
+            console.error('❌ updateConversationActivity: conversationId o userId faltante');
+            return false;
+        }
+
+        const conversationDocId = `conversation_${conversationId}`;
+        const timestamp = DateTime.now().setZone('America/Mexico_City').toISO();
+
+        console.log(`🔄 [${userId}] Actualizando actividad de conversación: ${conversationDocId}`);
+
+        // ✅ SOLUCIÓN DEFINITIVA: SIEMPRE usar UPSERT
+        try {
+            // Intentar leer el documento existente para preservar datos
+            let existingDoc = null;
+            try {
+                const { resource } = await this.container
+                    .item(conversationDocId, userId)
+                    .read();
+                existingDoc = resource;
+            } catch (readError) {
+                if (readError.code !== 404) {
+                    console.warn(`⚠️ [${userId}] Error leyendo documento existente (continuando):`, readError.message);
+                }
+            }
+
+            // ✅ CREAR DOCUMENTO ACTUALIZADO: Preservar datos existentes si los hay
+            const updatedDoc = {
+                id: conversationDocId,
+                conversationId: conversationId,
+                userId: userId,
+                userName: existingDoc?.userName || 'Usuario',
+                documentType: 'conversation_info',
+                createdAt: existingDoc?.createdAt || timestamp,
+                lastActivity: timestamp, // ✅ Actualizar timestamp
+                messageCount: (existingDoc?.messageCount || 0) + 1, // ✅ Incrementar contador
+                isActive: true,
+                partitionKey: userId,
+                ttl: 60 * 60 * 24 * 90,
+                version: '2.1.3',
+                // Preservar otros campos si existen (spread operator al final para evitar sobreescritura)
+                ...(existingDoc ? {
+                    ...existingDoc,
+                    // Sobrescribir solo los campos que queremos actualizar
+                    lastActivity: timestamp,
+                    messageCount: (existingDoc.messageCount || 0) + 1,
+                    isActive: true
+                } : {})
+            };
+
+            // ✅ UPSERT: Funciona SIEMPRE, sin importar si existe o no
+            const { resource: finalDoc } = await this.container.items.upsert(updatedDoc);
+            
+            if (!finalDoc) {
+                console.error(`❌ [${userId}] Upsert retornó documento null`);
+                return false;
+            }
+
+            console.log(`✅ [${userId}] Actividad de conversación actualizada exitosamente`);
+            console.log(`📊 [${userId}] Mensajes totales: ${finalDoc.messageCount}, Última actividad: ${finalDoc.lastActivity}`);
+            
+            return true;
+
+        } catch (upsertError) {
+            console.error(`❌ [${userId}] Error en upsert:`, upsertError.message);
+            return false;
+        }
+
+    } catch (error) {
+        console.error(`❌ [${userId}] Error general en updateConversationActivity:`, {
+            error: error.message,
+            conversationId: conversationId,
+            userId: userId
+        });
+        return false;
     }
+}
 
     /**
      * Elimina mensajes antiguos de una conversación

@@ -423,231 +423,27 @@ INSTRUCCIONES:
   }
 
   formatearTasas(tasasData, anio) {
-  if (!Array.isArray(tasasData) || !tasasData.length) {
-    return 'No hay datos de tasas disponibles';
-  }
+    if (!Array.isArray(tasasData) || !tasasData.length) {
+      return 'No hay datos de tasas disponibles';
+    }
 
-  // Mapear nombres de meses
-  const meses = {
-    '1': 'Ene', '2': 'Feb', '3': 'Mar', '4': 'Abr',
-    '5': 'May', '6': 'Jun', '7': 'Jul', '8': 'Ago',
-    '9': 'Sep', '10': 'Oct', '11': 'Nov', '12': 'Dic'
-  };
-
-  let respuesta = `## 📊 TASAS DE INTERÉS NOVA CORPORATION ${anio}\n\n`;
-  
-  // Crear tabla principal
-  respuesta += '| **Mes** | **Vista** | **Fijo 1M** | **Fijo 3M** | **Fijo 6M** | **FAP** | **Nov** | **Préstamos** |\n';
-  respuesta += '|---------|-----------|-------------|-------------|-------------|---------|---------|---------------|\n';
-  
-  // Ordenar datos por mes
-  const datosOrdenados = tasasData.sort((a, b) => {
-    const mesA = parseInt(a.Mes || '0');
-    const mesB = parseInt(b.Mes || '0');
-    return mesA - mesB;
-  });
-
-  // Llenar filas de la tabla
-  datosOrdenados.forEach(item => {
-    const numeroMes = (item.Mes || '').toString();
-    const nombreMes = meses[numeroMes] || `Mes ${numeroMes}`;
+    let respuesta = `Tasas de interés Nova Corporation ${anio}:\n\n`;
     
-    const vista = item.vista ? `${item.vista}%` : '-';
-    const fijo1 = item.fijo1 ? `${item.fijo1}%` : '-';
-    const fijo3 = item.fijo3 ? `${item.fijo3}%` : '-';
-    const fijo6 = item.fijo6 ? `${item.fijo6}%` : '-';
-    const fap = item.FAP ? `${item.FAP}%` : '-';
-    const nov = item.Nov ? `${item.Nov}%` : '-';
-    const prestamos = item.Prestamos ? `${item.Prestamos}%` : '-';
-    
-    respuesta += `| **${nombreMes}-${anio.toString().slice(-2)}** | ${vista} | ${fijo1} | ${fijo3} | ${fijo6} | ${fap} | ${nov} | ${prestamos} |\n`;
-  });
-
-  // Calcular estadísticas
-  const estadisticas = this.calcularEstadisticasTasas(tasasData);
-  
-  respuesta += '\n---\n\n';
-  respuesta += '## 📈 RESUMEN ESTADÍSTICO\n\n';
-  
-  // Tabla de resumen estadístico
-  respuesta += '| **Tipo de Tasa** | **Promedio** | **Mínimo** | **Máximo** | **Variación** |\n';
-  respuesta += '|------------------|--------------|------------|------------|---------------|\n';
-  
-  Object.entries(estadisticas).forEach(([tipo, stats]) => {
-    const promedio = stats.promedio.toFixed(2) + '%';
-    const minimo = stats.minimo.toFixed(2) + '%';
-    const maximo = stats.maximo.toFixed(2) + '%';
-    const variacion = (stats.maximo - stats.minimo).toFixed(2) + '%';
-    
-    respuesta += `| **${tipo}** | ${promedio} | ${minimo} | ${maximo} | ${variacion} |\n`;
-  });
-
-  // Análisis de tendencias
-  const tendencias = this.analizarTendencias(tasasData);
-  if (tendencias.length > 0) {
-    respuesta += '\n---\n\n';
-    respuesta += '## 📊 ANÁLISIS DE TENDENCIAS\n\n';
-    tendencias.forEach(tendencia => {
-      respuesta += `• **${tendencia.tipo}**: ${tendencia.descripcion}\n`;
+    tasasData.forEach(item => {
+      const mes = (item.Mes || '').toString();
+      respuesta += `${mes}:\n`;
+      if (item.vista) respuesta += `  - Vista: ${item.vista}%\n`;
+      if (item.fijo1) respuesta += `  - Fijo 1M: ${item.fijo1}%\n`;
+      if (item.fijo3) respuesta += `  - Fijo 3M: ${item.fijo3}%\n`;
+      if (item.fijo6) respuesta += `  - Fijo 6M: ${item.fijo6}%\n`;
+      if (item.FAP) respuesta += `  - FAP: ${item.FAP}%\n`;
+      if (item.Nov) respuesta += `  - Nov: ${item.Nov}%\n`;
+      if (item.Prestamos) respuesta += `  - Préstamos: ${item.Prestamos}%\n`;
+      respuesta += '\n';
     });
+
+    return respuesta;
   }
-
-  // Información adicional
-  respuesta += '\n---\n\n';
-  respuesta += '### ℹ️ Información Adicional:\n';
-  respuesta += `• **Período consultado**: Enero - Diciembre ${anio}\n`;
-  respuesta += `• **Total de meses con datos**: ${tasasData.length}\n`;
-  respuesta += `• **Fecha de consulta**: ${new Date().toLocaleDateString('es-MX')}\n`;
-  respuesta += '\n💡 *¿Necesitas un análisis específico o exportar estos datos? ¡Solo pregúntame!*';
-
-  return respuesta;
-}
-
-// Función auxiliar para calcular estadísticas
-calcularEstadisticasTasas(tasasData) {
-  const tipos = ['vista', 'fijo1', 'fijo3', 'fijo6', 'FAP', 'Nov', 'Prestamos'];
-  const estadisticas = {};
-  
-  tipos.forEach(tipo => {
-    const valores = tasasData
-      .map(item => parseFloat(item[tipo]))
-      .filter(val => !isNaN(val) && val > 0);
-    
-    if (valores.length > 0) {
-      const tipoNombre = {
-        'vista': 'Vista',
-        'fijo1': 'Fijo 1M',
-        'fijo3': 'Fijo 3M', 
-        'fijo6': 'Fijo 6M',
-        'FAP': 'FAP',
-        'Nov': 'Nov',
-        'Prestamos': 'Préstamos'
-      }[tipo] || tipo;
-
-      estadisticas[tipoNombre] = {
-        promedio: valores.reduce((a, b) => a + b, 0) / valores.length,
-        minimo: Math.min(...valores),
-        maximo: Math.max(...valores)
-      };
-    }
-  });
-  
-  return estadisticas;
-}
-
-// Función auxiliar para analizar tendencias
-analizarTendencias(tasasData) {
-  const tendencias = [];
-  
-  if (tasasData.length < 2) return tendencias;
-  
-  // Analizar tendencia de tasas más importantes
-  const tiposImportantes = ['fijo1', 'fijo3', 'fijo6', 'Prestamos'];
-  
-  tiposImportantes.forEach(tipo => {
-    const valores = tasasData
-      .filter(item => item[tipo] && !isNaN(parseFloat(item[tipo])))
-      .map(item => parseFloat(item[tipo]));
-    
-    if (valores.length >= 2) {
-      const inicial = valores[0];
-      const final = valores[valores.length - 1];
-      const diferencia = final - inicial;
-      
-      const tipoNombre = {
-        'fijo1': 'Fijo 1M',
-        'fijo3': 'Fijo 3M',
-        'fijo6': 'Fijo 6M', 
-        'Prestamos': 'Préstamos'
-      }[tipo];
-      
-      if (Math.abs(diferencia) >= 0.1) {
-        const direccion = diferencia > 0 ? 'incrementó' : 'disminuyó';
-        const descripcion = `${direccion} ${Math.abs(diferencia).toFixed(2)} puntos porcentuales (de ${inicial}% a ${final}%)`;
-        
-        tendencias.push({
-          tipo: tipoNombre,
-          descripcion: descripcion
-        });
-      }
-    }
-  });
-  
-  return tendencias;
-}
-
-// Función auxiliar para calcular estadísticas
-calcularEstadisticasTasas(tasasData) {
-  const tipos = ['vista', 'fijo1', 'fijo3', 'fijo6', 'FAP', 'Nov', 'Prestamos'];
-  const estadisticas = {};
-  
-  tipos.forEach(tipo => {
-    const valores = tasasData
-      .map(item => parseFloat(item[tipo]))
-      .filter(val => !isNaN(val) && val > 0);
-    
-    if (valores.length > 0) {
-      const tipoNombre = {
-        'vista': 'Vista',
-        'fijo1': 'Fijo 1M',
-        'fijo3': 'Fijo 3M', 
-        'fijo6': 'Fijo 6M',
-        'FAP': 'FAP',
-        'Nov': 'Nov',
-        'Prestamos': 'Préstamos'
-      }[tipo] || tipo;
-
-      estadisticas[tipoNombre] = {
-        promedio: valores.reduce((a, b) => a + b, 0) / valores.length,
-        minimo: Math.min(...valores),
-        maximo: Math.max(...valores)
-      };
-    }
-  });
-  
-  return estadisticas;
-}
-
-// Función auxiliar para analizar tendencias
-analizarTendencias(tasasData) {
-  const tendencias = [];
-  
-  if (tasasData.length < 2) return tendencias;
-  
-  // Analizar tendencia de tasas más importantes
-  const tiposImportantes = ['fijo1', 'fijo3', 'fijo6', 'Prestamos'];
-  
-  tiposImportantes.forEach(tipo => {
-    const valores = tasasData
-      .filter(item => item[tipo] && !isNaN(parseFloat(item[tipo])))
-      .map(item => parseFloat(item[tipo]));
-    
-    if (valores.length >= 2) {
-      const inicial = valores[0];
-      const final = valores[valores.length - 1];
-      const diferencia = final - inicial;
-      
-      const tipoNombre = {
-        'fijo1': 'Fijo 1M',
-        'fijo3': 'Fijo 3M',
-        'fijo6': 'Fijo 6M', 
-        'Prestamos': 'Préstamos'
-      }[tipo];
-      
-      if (Math.abs(diferencia) >= 0.1) {
-        const direccion = diferencia > 0 ? 'incrementó' : 'disminuyó';
-        const descripcion = `${direccion} ${Math.abs(diferencia).toFixed(2)} puntos porcentuales (de ${inicial}% a ${final}%)`;
-        
-        tendencias.push({
-          tipo: tipoNombre,
-          descripcion: descripcion
-        });
-      }
-    }
-  });
-  
-  return tendencias;
-}
 
   async consultarSaldoUsuario(userToken, userInfo) {
     try {

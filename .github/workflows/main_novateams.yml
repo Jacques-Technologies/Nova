@@ -1,8 +1,4 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# Learn more about GitHub Actions: https://docs.github.com/en/actions
-
-name: Build and deploy Node.js app to Azure Web App - novateams
+name: Build and deploy Node.js app to Azure Web App - chatbotteamsnova
 
 on:
   push:
@@ -13,43 +9,79 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read #This is required for actions/checkout
-
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Set up Node.js version
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '20.x'
-
-      - name: npm install, build
+          cache: 'npm'
+      
+      - name: Debug npm config
+        run: npm config list
+      
+      - name: Show Node and NPM versions
         run: |
-          npm install
-          npm run build --if-present
-
-      - name: Upload artifact for deployment job
+          node -v
+          npm -v
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ls --depth=0
+      
+      - name: Build app (with debug logs)
+        run: |
+          npm run build --if-present --verbose
+        env:
+          CI: true
+          DEBUG: '*'
+      
+      - name: Zip artifact for deployment
+        run: zip release.zip ./* -r
+      
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          path: release.zip
+          retention-days: 1
 
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    
+
+    permissions:
+      id-token: write
+      contents: read
+
     steps:
-      - name: Download artifact from build job
+      - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
           name: node-app
       
-      - name: 'Deploy to Azure Web App'
+      - name: Unzip artifact
+        run: unzip release.zip
+
+      - name: Login to Azure using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_BFEEF02102834B8EAD6A11945F5DDD8A }}
+          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_6AA9EF565D9A4697B9275D9D49C147DA }}
+          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_9BE5BFC2F6BF476AB864EFED1307D15F }}
+
+      - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
-          app-name: 'novateams'
+          app-name: 'chatbotteamsnova'
           slot-name: 'Production'
-          package: .
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_05F53A04878B404490F35997430A777B }}
+          package: './release.zip'
+
+          
+
+
+
+
